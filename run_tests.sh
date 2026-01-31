@@ -2,8 +2,8 @@
 # Run tests for SemiRouter
 #
 # Usage:
-#   ./run_tests.sh          # Run fast tests only (~0.4s)
-#   ./run_tests.sh fast     # Run fast tests only (~0.4s)
+#   ./run_tests.sh          # Run fast tests in parallel
+#   ./run_tests.sh fast     # Run fast tests in parallel
 #   ./run_tests.sh slow     # Run slow tests in parallel (~35s)
 #   ./run_tests.sh all      # Run all tests in parallel (~35s)
 #
@@ -15,8 +15,8 @@ MODE="${1:-fast}"
 
 case "$MODE" in
     fast)
-        echo "Running fast tests..."
-        python -m pytest tests/test_routing.py -m "not slow" -v
+        echo "Running fast tests (parallel)..."
+        python -m pytest tests/test_routing.py -m "not slow" -n auto -v
         ;;
     slow)
         echo "Running slow tests (parallel)..."
