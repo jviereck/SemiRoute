@@ -145,12 +145,24 @@ class TraceRouter:
             if layer not in pad.layers or pad.net_id != net_id:
                 continue
             gx, gy = to_grid(pad.x, pad.y)
-            # Use rectangular bounds matching pad shape (not square)
-            rx = int((pad.width / 2) / resolution) + 1
-            ry = int((pad.height / 2) / resolution) + 1
-            for dx in range(-rx, rx + 1):
-                for dy in range(-ry, ry + 1):
-                    cells.add((gx + dx, gy + dy))
+
+            # For rotated pads, use circle with diagonal radius (matches _block_rect)
+            if pad.angle != 0:
+                import math
+                diagonal = math.sqrt(pad.width ** 2 + pad.height ** 2)
+                r = int((diagonal / 2) / resolution) + 1
+                r_sq = r * r
+                for dx in range(-r, r + 1):
+                    for dy in range(-r, r + 1):
+                        if dx * dx + dy * dy <= r_sq:
+                            cells.add((gx + dx, gy + dy))
+            else:
+                # Use rectangular bounds matching pad shape
+                rx = int((pad.width / 2) / resolution) + 1
+                ry = int((pad.height / 2) / resolution) + 1
+                for dx in range(-rx, rx + 1):
+                    for dy in range(-ry, ry + 1):
+                        cells.add((gx + dx, gy + dy))
 
         # Add trace cells (only within trace geometry, no clearance)
         for trace in self.parser.get_traces_by_layer(layer):

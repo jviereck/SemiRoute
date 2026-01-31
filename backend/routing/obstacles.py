@@ -1,5 +1,7 @@
 """Obstacle map for PCB routing."""
 import math
+import numpy as np
+from scipy import ndimage
 from dataclasses import dataclass
 from typing import Optional
 
@@ -276,6 +278,8 @@ class ObstacleMap:
         """
         Get blocked cells expanded by a radius, with caching.
 
+        Uses numpy-based morphological dilation for speed.
+
         Args:
             radius: Expansion radius in world units (mm)
 
@@ -291,16 +295,45 @@ class ObstacleMap:
         if grid_radius in self._expanded_cache:
             return self._expanded_cache[grid_radius]
 
-        # Build expanded set
-        actual_grid_radius = int(math.ceil(radius / self.resolution))
-        radius_sq = actual_grid_radius * actual_grid_radius
+        if not self._blocked:
+            self._expanded_cache[grid_radius] = set()
+            return self._expanded_cache[grid_radius]
 
-        expanded: set[tuple[int, int]] = set()
+        # Get bounds of blocked cells
+        min_gx = min(c[0] for c in self._blocked)
+        max_gx = max(c[0] for c in self._blocked)
+        min_gy = min(c[1] for c in self._blocked)
+        max_gy = max(c[1] for c in self._blocked)
+
+        # Add padding for expansion
+        actual_grid_radius = int(math.ceil(radius / self.resolution))
+        pad = actual_grid_radius + 1
+
+        # Create numpy array (offset coordinates to start at 0)
+        width = max_gx - min_gx + 1 + 2 * pad
+        height = max_gy - min_gy + 1 + 2 * pad
+
+        blocked_array = np.zeros((height, width), dtype=np.uint8)
+
+        # Fill blocked cells
         for gx, gy in self._blocked:
-            for dx in range(-actual_grid_radius, actual_grid_radius + 1):
-                for dy in range(-actual_grid_radius, actual_grid_radius + 1):
-                    if dx * dx + dy * dy <= radius_sq:
-                        expanded.add((gx + dx, gy + dy))
+            blocked_array[gy - min_gy + pad, gx - min_gx + pad] = 1
+
+        # Create circular structuring element for dilation
+        y, x = np.ogrid[-actual_grid_radius:actual_grid_radius + 1,
+                        -actual_grid_radius:actual_grid_radius + 1]
+        structuring_element = (x * x + y * y <= actual_grid_radius * actual_grid_radius).astype(np.uint8)
+
+        # Dilate using scipy
+        dilated = ndimage.binary_dilation(blocked_array, structure=structuring_element)
+
+        # Convert back to set of coordinates
+        expanded: set[tuple[int, int]] = set()
+        gy_indices, gx_indices = np.where(dilated)
+        for gy_idx, gx_idx in zip(gy_indices, gx_indices):
+            gx = gx_idx + min_gx - pad
+            gy = gy_idx + min_gy - pad
+            expanded.add((gx, gy))
 
         self._expanded_cache[grid_radius] = expanded
         return expanded

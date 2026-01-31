@@ -76,6 +76,11 @@ svg_generator = SVGGenerator(pcb_parser)
 # Create router with cached obstacle maps at startup
 trace_router = TraceRouter(pcb_parser, clearance=0.2, cache_obstacles=True)
 
+# Pre-expand blocked cells for common trace widths to avoid slow first request
+# 0.125mm radius = 0.25mm trace width (most common)
+for obs_map in trace_router._obstacle_cache.values():
+    obs_map.get_expanded_blocked(0.125)
+
 
 @app.get("/")
 async def root():

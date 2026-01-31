@@ -2,7 +2,13 @@
 from io import BytesIO
 from pathlib import Path
 
-import cairosvg
+try:
+    import cairosvg
+    CAIROSVG_AVAILABLE = True
+except (ImportError, OSError):
+    CAIROSVG_AVAILABLE = False
+    cairosvg = None
+
 from PIL import Image
 
 
@@ -21,7 +27,13 @@ def render_svg_to_png(
 
     Returns:
         PIL Image object
+
+    Raises:
+        RuntimeError: If cairosvg is not available
     """
+    if not CAIROSVG_AVAILABLE:
+        raise RuntimeError("cairosvg is not available. Install cairo library.")
+
     # Convert SVG to PNG bytes
     png_bytes = cairosvg.svg2png(
         bytestring=svg_content.encode('utf-8'),

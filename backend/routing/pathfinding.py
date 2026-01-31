@@ -123,9 +123,11 @@ def astar_search(
 
     # Get blocked cells (expanded by trace radius if needed)
     # Uses cached expansion from obstacle map for speed
+    # Also expand allowed cells to match, so same-net routing works correctly
     if trace_radius > 0:
         blocked = obstacle_map.get_expanded_blocked(trace_radius)
         extra = _expand_blocked_cells(extra, trace_radius, resolution) if extra else set()
+        allowed = _expand_blocked_cells(allowed, trace_radius, resolution) if allowed else set()
     else:
         blocked = obstacle_map._blocked
 
