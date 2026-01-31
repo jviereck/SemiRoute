@@ -571,8 +571,8 @@
     }
 
     /**
-     * Find the best pad/via/user-trace match at click coordinates.
-     * @returns {Object|null} { type: 'pad'|'via'|'user-trace'|'user-via', element: Element } or null
+     * Find the best pad/via/trace/user-trace match at click coordinates.
+     * @returns {Object|null} { type: 'pad'|'via'|'trace'|'user-trace'|'user-via', element: Element } or null
      */
     function findBestMatchAtPoint(clickX, clickY) {
         // Get all elements at click point
@@ -581,6 +581,7 @@
         // Find all element types at this point
         const padsAtPoint = elements.filter(el => el.classList.contains('pad'));
         const viasAtPoint = elements.filter(el => el.classList.contains('via') && !el.classList.contains('user-via'));
+        const tracesAtPoint = elements.filter(el => el.classList.contains('trace'));
         const userTracesAtPoint = elements.filter(el => el.classList.contains('user-trace'));
         const userViasAtPoint = elements.filter(el => el.classList.contains('user-via'));
 
@@ -639,6 +640,17 @@
             }
         }
 
+        // Check board traces (lowest priority - they're background elements)
+        for (const trace of tracesAtPoint) {
+            // For paths, use a moderate fixed distance
+            const distance = 10;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestMatch = trace;
+                bestType = 'trace';
+            }
+        }
+
         if (bestMatch) {
             return { type: bestType, element: bestMatch };
         }
@@ -683,8 +695,8 @@
                                 selectSegment(routeId, segmentIndex);
                             }
                         }
-                    } else if (match.type === 'pad' || match.type === 'via') {
-                        // Clicked on a pad or via - clear segment selection and show net
+                    } else if (match.type === 'pad' || match.type === 'via' || match.type === 'trace') {
+                        // Clicked on a pad, via, or trace - clear segment selection and show net
                         clearSegmentSelection();
                         const netId = parseInt(match.element.dataset.net, 10);
                         selectNet(netId, match.element.dataset.netName);

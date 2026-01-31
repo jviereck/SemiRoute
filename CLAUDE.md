@@ -27,6 +27,7 @@ npm run test:trace-mode
 npm run test:routing
 npm run test:multilayer
 npm run test:selection
+npm run test:highlight
 
 # Python unit tests (pytest)
 pytest tests/
