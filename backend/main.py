@@ -45,6 +45,30 @@ class ViaCheckResponse(BaseModel):
     valid: bool
     message: str = ""
 
+
+class TraceRequest(BaseModel):
+    """Request model for registering a user trace."""
+    id: str
+    segments: list[list[float]]  # List of [x, y] points
+    width: float
+    layer: str
+    net_id: Optional[int] = None
+
+
+class TraceResponse(BaseModel):
+    """Response model for trace operations."""
+    success: bool
+    message: str = ""
+
+
+class TraceInfo(BaseModel):
+    """Info model for a single trace."""
+    id: str
+    layer: str
+    width: float
+    net_id: Optional[int]
+    segment_count: int
+
 # Load PCB once at startup
 pcb_parser = PCBParser(DEFAULT_PCB_FILE)
 svg_generator = SVGGenerator(pcb_parser)
@@ -190,6 +214,78 @@ async def route_trace(request: RouteRequest):
             path=[],
             message="No valid route found - path may be blocked"
         )
+
+
+@app.post("/api/traces", response_model=TraceResponse)
+async def register_trace(request: TraceRequest):
+    """
+    Register a new user-created trace for clearance checking.
+
+    This adds the trace to the pending store so subsequent routing
+    requests will avoid crossing it.
+    """
+    # Convert segments from list of [x, y] to list of (x, y) tuples
+    segments = [(s[0], s[1]) for s in request.segments]
+
+    trace_router.pending_store.add_trace(
+        trace_id=request.id,
+        segments=segments,
+        width=request.width,
+        layer=request.layer,
+        net_id=request.net_id
+    )
+
+    return TraceResponse(
+        success=True,
+        message=f"Trace {request.id} registered on {request.layer}"
+    )
+
+
+@app.delete("/api/traces/{trace_id}", response_model=TraceResponse)
+async def remove_trace(trace_id: str):
+    """Remove a specific user trace from the pending store."""
+    removed = trace_router.pending_store.remove_trace(trace_id)
+
+    if removed:
+        return TraceResponse(
+            success=True,
+            message=f"Trace {trace_id} removed"
+        )
+    else:
+        return TraceResponse(
+            success=False,
+            message=f"Trace {trace_id} not found"
+        )
+
+
+@app.delete("/api/traces", response_model=TraceResponse)
+async def clear_all_traces():
+    """Remove all user traces from the pending store."""
+    trace_router.pending_store.clear()
+
+    return TraceResponse(
+        success=True,
+        message="All traces cleared"
+    )
+
+
+@app.get("/api/traces")
+async def list_traces():
+    """List all pending user traces."""
+    traces = trace_router.pending_store.get_all_traces()
+
+    return {
+        "traces": [
+            {
+                "id": t.id,
+                "layer": t.layer,
+                "width": t.width,
+                "net_id": t.net_id,
+                "segment_count": len(t.segments)
+            }
+            for t in traces
+        ]
+    }
 
 
 # Mount static files last (after API routes)

@@ -10,7 +10,238 @@
 
     // Trace mode state
     let appMode = 'select';  // 'select' | 'trace'
-    let userTraces = [];  // Confirmed traces (persistent across sessions)
+    // Routes: { id, segments: [{path, layer, width}], netId, visible }
+    // Each route groups all segments from one routing session (start to double-click)
+    let userRoutes = [];
+    let nextRouteId = 1;
+
+    // Layer colors for route list indicators
+    const LAYER_COLORS = {
+        'F.Cu': '#C83232',
+        'B.Cu': '#3232C8',
+        'In1.Cu': '#C8C832',
+        'In2.Cu': '#32C8C8'
+    };
+
+    /**
+     * Generate a unique route ID.
+     */
+    function generateRouteId() {
+        return `route-${nextRouteId++}`;
+    }
+
+    /**
+     * Get the primary layer for a route (most common layer among segments).
+     */
+    function getRoutePrimaryLayer(route) {
+        if (!route.segments || route.segments.length === 0) return 'F.Cu';
+        // Return the layer of the first segment
+        return route.segments[0].layer;
+    }
+
+    /**
+     * Get the primary width for a route.
+     */
+    function getRoutePrimaryWidth(route) {
+        if (!route.segments || route.segments.length === 0) return 0.25;
+        return route.segments[0].width;
+    }
+
+    /**
+     * Add a route to the routes list UI.
+     */
+    function addRouteToList(route) {
+        const listEl = document.getElementById('routes-list');
+        const hintEl = listEl.querySelector('.hint');
+
+        // Remove the "No routes yet" hint
+        if (hintEl) {
+            hintEl.remove();
+        }
+
+        // Create route item
+        const item = document.createElement('div');
+        item.className = 'route-item';
+        item.dataset.routeId = route.id;
+
+        const layer = getRoutePrimaryLayer(route);
+        const width = getRoutePrimaryWidth(route);
+        const color = LAYER_COLORS[layer] || '#888888';
+        const routeNum = route.id.replace('route-', '');
+        const segCount = route.segments.length;
+
+        item.innerHTML = `
+            <button class="toggle-btn" title="Toggle visibility">&#128065;</button>
+            <span class="layer-indicator" style="background: ${color}"></span>
+            <span class="route-label">Route ${routeNum} - ${layer} (${segCount} seg)</span>
+            <button class="remove-btn" title="Remove route">&times;</button>
+        `;
+
+        // Toggle visibility handler
+        item.querySelector('.toggle-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleRouteVisibility(route.id);
+        });
+
+        // Remove handler
+        item.querySelector('.remove-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeRoute(route.id);
+        });
+
+        listEl.appendChild(item);
+        updateRouteCount();
+        updateClearAllButton();
+
+        // Notify backend about each segment in this route
+        registerRouteWithBackend(route);
+    }
+
+    /**
+     * Remove a route from the list and SVG.
+     */
+    function removeRoute(routeId) {
+        // Find the route first to get segment count for backend cleanup
+        const idx = userRoutes.findIndex(r => r.id === routeId);
+        const segmentCount = idx >= 0 ? userRoutes[idx].segments.length : 0;
+
+        // Remove from userRoutes array
+        if (idx >= 0) {
+            userRoutes.splice(idx, 1);
+        }
+
+        // Remove all SVG elements for this route
+        viewer.removeTraceById(routeId);
+
+        // Remove from list UI
+        const item = document.querySelector(`.route-item[data-route-id="${routeId}"]`);
+        if (item) {
+            item.remove();
+        }
+
+        // Show hint if list is empty
+        const listEl = document.getElementById('routes-list');
+        if (listEl.children.length === 0) {
+            listEl.innerHTML = '<p class="hint">No routes yet</p>';
+        }
+
+        updateRouteCount();
+        updateClearAllButton();
+
+        // Notify backend to remove all segments of this route
+        unregisterRouteFromBackend(routeId, segmentCount);
+    }
+
+    /**
+     * Toggle visibility of a route (all its segments).
+     */
+    function toggleRouteVisibility(routeId) {
+        const route = userRoutes.find(r => r.id === routeId);
+        if (!route) return;
+
+        route.visible = !route.visible;
+        viewer.setTraceVisible(routeId, route.visible);
+
+        // Update UI
+        const item = document.querySelector(`.route-item[data-route-id="${routeId}"]`);
+        if (item) {
+            item.classList.toggle('hidden-route', !route.visible);
+            const toggleBtn = item.querySelector('.toggle-btn');
+            toggleBtn.classList.toggle('hidden-icon', !route.visible);
+        }
+    }
+
+    /**
+     * Update the route count display.
+     */
+    function updateRouteCount() {
+        const countEl = document.getElementById('route-count');
+        countEl.textContent = `(${userRoutes.length})`;
+    }
+
+    /**
+     * Update the Clear All button state.
+     */
+    function updateClearAllButton() {
+        const btn = document.getElementById('clear-all-routes');
+        btn.disabled = userRoutes.length === 0;
+    }
+
+    /**
+     * Clear all user routes.
+     */
+    function clearAllRoutes() {
+        // Clear SVG
+        viewer.clearAllUserTraces();
+
+        // Clear backend
+        clearAllTracesFromBackend();
+
+        // Clear state
+        userRoutes = [];
+
+        // Reset UI
+        const listEl = document.getElementById('routes-list');
+        listEl.innerHTML = '<p class="hint">No routes yet</p>';
+
+        updateRouteCount();
+        updateClearAllButton();
+    }
+
+    /**
+     * Register a route with the backend for clearance checking.
+     * Each segment is registered separately with unique IDs.
+     */
+    async function registerRouteWithBackend(route) {
+        for (let i = 0; i < route.segments.length; i++) {
+            const seg = route.segments[i];
+            const segmentId = `${route.id}-seg${i}`;
+            try {
+                await fetch('/api/traces', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: segmentId,
+                        segments: seg.path,
+                        width: seg.width,
+                        layer: seg.layer,
+                        net_id: route.netId || null
+                    })
+                });
+            } catch (error) {
+                console.error('Failed to register segment with backend:', error);
+            }
+        }
+    }
+
+    /**
+     * Unregister a route from the backend (all its segments).
+     */
+    async function unregisterRouteFromBackend(routeId, segmentCount) {
+        for (let i = 0; i < segmentCount; i++) {
+            const segmentId = `${routeId}-seg${i}`;
+            try {
+                await fetch(`/api/traces/${segmentId}`, {
+                    method: 'DELETE'
+                });
+            } catch (error) {
+                // Ignore errors for non-existent segments
+            }
+        }
+    }
+
+    /**
+     * Clear all traces from backend.
+     */
+    async function clearAllTracesFromBackend() {
+        try {
+            await fetch('/api/traces', {
+                method: 'DELETE'
+            });
+        } catch (error) {
+            console.error('Failed to clear traces from backend:', error);
+        }
+    }
 
     // Continuous routing session state
     // - Mouse move: continuously routes to cursor position (debounced)
@@ -20,11 +251,12 @@
     // - Escape: removes all traces added in this session
     let routingSession = null;
     // {
+    //   routeId: string,               // Unique ID for this route (all segments share this)
     //   startNet: number,              // Net ID from initial pad
     //   startPoint: {x, y},            // Current start point
     //   cursorPoint: {x, y},           // Current cursor position
     //   pendingPath: array,            // Current route preview to cursor
-    //   sessionSegments: [],           // Segments added in this session (for undo)
+    //   sessionSegments: [],           // Segments added in this session: [{path, layer, width}]
     //   sessionVias: [],               // Vias added in this session (for undo)
     //   currentLayer: string,
     //   width: number
@@ -33,6 +265,9 @@
     // Routing state for continuous updates
     let isRouting = false;  // True while a routing request is in progress
     let pendingCursorUpdate = false;  // True if cursor moved while routing
+    let routeDebounceTimer = null;    // Timer for debouncing route requests
+    let routeAbortController = null;  // AbortController for canceling in-flight requests
+    const ROUTE_DEBOUNCE_MS = 50;     // Minimum delay between route requests
 
     // Expose state for debugging/testing
     window.getRoutingState = () => ({
@@ -216,7 +451,7 @@
 
     /**
      * Handle mouse move in trace mode.
-     * Continuously routes to cursor position.
+     * Continuously routes to cursor position (debounced).
      */
     function handleTraceMouseMove(e) {
         if (!routingSession) return;
@@ -230,8 +465,14 @@
             return;
         }
 
-        // Start routing immediately
-        routeToCursor();
+        // Debounce route requests to prevent overwhelming the server
+        if (routeDebounceTimer) {
+            clearTimeout(routeDebounceTimer);
+        }
+        routeDebounceTimer = setTimeout(() => {
+            routeDebounceTimer = null;
+            routeToCursor();
+        }, ROUTE_DEBOUNCE_MS);
     }
 
     /**
@@ -253,6 +494,12 @@
             return;
         }
 
+        // Cancel any existing request
+        if (routeAbortController) {
+            routeAbortController.abort();
+        }
+        routeAbortController = new AbortController();
+
         isRouting = true;
         pendingCursorUpdate = false;
 
@@ -268,7 +515,8 @@
                     layer: routingSession.currentLayer,
                     width: routingSession.width,
                     net_id: routingSession.startNet
-                })
+                }),
+                signal: routeAbortController.signal
             });
 
             const data = await response.json();
@@ -289,17 +537,28 @@
                 }
             }
         } catch (error) {
-            console.error('Routing error:', error);
-            if (routingSession) {
-                routingSession.pendingPath = null;
+            // Ignore abort errors (expected when canceling)
+            if (error.name !== 'AbortError') {
+                console.error('Routing error:', error);
+                if (routingSession) {
+                    routingSession.pendingPath = null;
+                }
             }
         } finally {
             isRouting = false;
+            routeAbortController = null;
 
-            // If cursor moved while we were routing, immediately start another route
+            // If cursor moved while we were routing, start another route (debounced)
             if (pendingCursorUpdate && routingSession) {
                 pendingCursorUpdate = false;
-                routeToCursor();
+                // Use debounce instead of immediate call to prevent flooding
+                if (routeDebounceTimer) {
+                    clearTimeout(routeDebounceTimer);
+                }
+                routeDebounceTimer = setTimeout(() => {
+                    routeDebounceTimer = null;
+                    routeToCursor();
+                }, ROUTE_DEBOUNCE_MS);
             }
         }
     }
@@ -328,7 +587,11 @@
                 }
             }
 
+            // Generate route ID for this entire routing session
+            const routeId = generateRouteId();
+
             routingSession = {
+                routeId: routeId,
                 startNet: startNet,
                 startPoint: { x: target.x, y: target.y },
                 cursorPoint: { x: target.x, y: target.y },
@@ -386,17 +649,16 @@
     async function commitCurrentSegment(newStartX, newStartY) {
         if (!routingSession || !routingSession.pendingPath) return;
 
-        // Confirm the pending segment
+        // Store segment info (all segments share the session's routeId)
         const segment = {
             path: routingSession.pendingPath,
             layer: routingSession.currentLayer,
             width: routingSession.width
         };
         routingSession.sessionSegments.push(segment);
-        userTraces.push({ ...segment });
 
-        // Render as confirmed
-        viewer.confirmPendingTrace(segment.path, segment.layer, segment.width);
+        // Render as confirmed with the session's route ID (all segments share it)
+        viewer.confirmPendingTrace(segment.path, segment.layer, segment.width, routingSession.routeId);
 
         // Move start point to new position
         routingSession.startPoint = { x: newStartX, y: newStartY };
@@ -486,6 +748,18 @@
         const segmentCount = routingSession.sessionSegments.length;
         const viaCount = routingSession.sessionVias.length;
 
+        // If we have segments, create a route entry
+        if (segmentCount > 0) {
+            const route = {
+                id: routingSession.routeId,
+                segments: routingSession.sessionSegments,
+                netId: routingSession.startNet,
+                visible: true
+            };
+            userRoutes.push(route);
+            addRouteToList(route);
+        }
+
         updateTraceStatus(`Done: ${segmentCount} segment(s), ${viaCount} via(s)`, 'success');
         resetTraceState();
     }
@@ -496,17 +770,14 @@
     function cancelRoutingSession() {
         if (!routingSession) return;
 
-        // Remove all segments added in this session from userTraces
-        for (const segment of routingSession.sessionSegments) {
-            const idx = userTraces.indexOf(segment);
-            if (idx >= 0) {
-                userTraces.splice(idx, 1);
-            }
+        // Remove all SVG elements with this route ID (segments haven't been added to list yet)
+        if (routingSession.sessionSegments.length > 0) {
+            viewer.removeTraceById(routingSession.routeId);
         }
 
-        // Remove visual elements - clear user traces group and rebuild
+        // Remove visual elements - clear pending elements and session vias
         viewer.clearPendingElements();
-        viewer.removeSessionTraces(routingSession.sessionSegments, routingSession.sessionVias);
+        viewer.removeSessionTraces([], routingSession.sessionVias);
 
         updateTraceStatus('Routing cancelled - all changes undone', '');
         resetTraceState();
@@ -547,6 +818,16 @@
     function resetTraceState() {
         isRouting = false;
         pendingCursorUpdate = false;
+        // Clear debounce timer
+        if (routeDebounceTimer) {
+            clearTimeout(routeDebounceTimer);
+            routeDebounceTimer = null;
+        }
+        // Cancel any in-flight request
+        if (routeAbortController) {
+            routeAbortController.abort();
+            routeAbortController = null;
+        }
         // Clear routing net highlight
         viewer.clearRoutingHighlight();
         routingSession = null;
@@ -600,6 +881,7 @@
         document.getElementById('trace-mode-toggle').addEventListener('click', toggleTraceMode);
         document.getElementById('trace-confirm').addEventListener('click', confirmTrace);
         document.getElementById('trace-cancel').addEventListener('click', cancelTrace);
+        document.getElementById('clear-all-routes').addEventListener('click', clearAllRoutes);
     }
 
     /**

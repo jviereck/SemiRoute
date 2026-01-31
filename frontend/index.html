@@ -11,6 +11,40 @@
         <aside class="sidebar">
             <h1>SemiRouter</h1>
 
+            <section class="panel" id="trace-mode-panel">
+                <h2>Trace Mode</h2>
+                <button id="trace-mode-toggle">Enable Trace Mode</button>
+                <div id="trace-options" class="hidden">
+                    <label>Layer:
+                        <select id="trace-layer">
+                            <option value="F.Cu">F.Cu (Front)</option>
+                            <option value="B.Cu">B.Cu (Back)</option>
+                            <option value="In1.Cu">In1.Cu</option>
+                            <option value="In2.Cu">In2.Cu</option>
+                        </select>
+                    </label>
+                    <label>Width:
+                        <input type="number" id="trace-width" value="0.25" step="0.05" min="0.1"> mm
+                    </label>
+                    <div id="trace-status">Click a pad to start</div>
+                    <div id="trace-error" class="hidden"></div>
+                    <div id="trace-actions" class="hidden">
+                        <button id="trace-confirm">Confirm</button>
+                        <button id="trace-cancel">Cancel</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel" id="routes-panel">
+                <h2>Routes <span id="route-count">(0)</span></h2>
+                <div id="routes-list" class="routes-list">
+                    <p class="hint">No routes yet</p>
+                </div>
+                <div class="routes-actions">
+                    <button id="clear-all-routes" class="small-btn" disabled>Clear All</button>
+                </div>
+            </section>
+
             <section class="panel">
                 <h2>Layers</h2>
                 <div id="layer-controls">
@@ -104,39 +138,6 @@
                 </ul>
             </section>
 
-            <section class="panel" id="trace-mode-panel">
-                <h2>Trace Mode</h2>
-                <button id="trace-mode-toggle">Enable Trace Mode</button>
-                <div id="trace-options" class="hidden">
-                    <label>Layer:
-                        <select id="trace-layer">
-                            <option value="F.Cu">F.Cu (Front)</option>
-                            <option value="B.Cu">B.Cu (Back)</option>
-                            <option value="In1.Cu">In1.Cu</option>
-                            <option value="In2.Cu">In2.Cu</option>
-                        </select>
-                    </label>
-                    <label>Width:
-                        <input type="number" id="trace-width" value="0.25" step="0.05" min="0.1"> mm
-                    </label>
-                    <div id="trace-status">Click a pad to start</div>
-                    <div id="trace-error" class="hidden"></div>
-                    <div id="trace-actions" class="hidden">
-                        <button id="trace-confirm">Confirm</button>
-                        <button id="trace-cancel">Cancel</button>
-                    </div>
-                </div>
-            </section>
-
-            <section class="panel" id="routes-panel">
-                <h2>Routes <span id="route-count">(0)</span></h2>
-                <div id="routes-list" class="routes-list">
-                    <p class="hint">No routes yet</p>
-                </div>
-                <div class="routes-actions">
-                    <button id="clear-all-routes" class="small-btn" disabled>Clear All</button>
-                </div>
-            </section>
         </aside>
 
         <main class="viewer">

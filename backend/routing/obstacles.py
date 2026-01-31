@@ -42,6 +42,9 @@ class ObstacleMap:
         # Blocked cells: set of (grid_x, grid_y) tuples
         self._blocked: set[tuple[int, int]] = set()
 
+        # Cache for expanded blocked cells by radius (in grid units)
+        self._expanded_cache: dict[int, set[tuple[int, int]]] = {}
+
         # Build obstacle map
         self._build_obstacles()
 
@@ -60,17 +63,24 @@ class ObstacleMap:
         """Block all grid cells within a circle."""
         # Expand by clearance
         r = radius + self.clearance
+        r_sq = r * r  # Use squared distance to avoid sqrt
 
-        # Grid bounds
+        # Grid center and radius
         gx, gy = self._to_grid(cx, cy)
         gr = int(math.ceil(r / self.resolution)) + 1
 
+        # Offset from grid center to actual center (for accurate distance calc)
+        gcx, gcy = self._to_world(gx, gy)
+        off_x = cx - gcx
+        off_y = cy - gcy
+        res = self.resolution
+
         for dx in range(-gr, gr + 1):
             for dy in range(-gr, gr + 1):
-                # Check if cell center is within radius
-                wx, wy = self._to_world(gx + dx, gy + dy)
-                dist = math.sqrt((wx - cx) ** 2 + (wy - cy) ** 2)
-                if dist <= r:
+                # Distance from cell center to circle center (squared)
+                dist_x = dx * res - off_x
+                dist_y = dy * res - off_y
+                if dist_x * dist_x + dist_y * dist_y <= r_sq:
                     self._blocked.add((gx + dx, gy + dy))
 
     def _block_rect(
@@ -108,23 +118,62 @@ class ObstacleMap:
         """Block all grid cells along a line segment with given width."""
         # Expand by clearance
         r = width / 2 + self.clearance
+        r_sq = r * r
 
-        # Line length and direction
+        # Line vector
         dx = x2 - x1
         dy = y2 - y1
-        length = math.sqrt(dx * dx + dy * dy)
+        length_sq = dx * dx + dy * dy
 
-        if length < 0.001:
-            self._block_circle(x1, y1, r)
+        if length_sq < 0.000001:
+            self._block_circle(x1, y1, r - self.clearance)
             return
 
-        # Step along line
-        steps = int(math.ceil(length / self.resolution)) + 1
-        for i in range(steps + 1):
-            t = i / steps
-            px = x1 + t * dx
-            py = y1 + t * dy
-            self._block_circle(px, py, r - self.clearance)
+        length = math.sqrt(length_sq)
+
+        # Compute bounding box of the capsule shape
+        min_x = min(x1, x2) - r
+        max_x = max(x1, x2) + r
+        min_y = min(y1, y2) - r
+        max_y = max(y1, y2) + r
+
+        # Convert to grid bounds
+        gx1, gy1 = self._to_grid(min_x, min_y)
+        gx2, gy2 = self._to_grid(max_x, max_y)
+
+        res = self.resolution
+
+        # Check each cell in bounding box
+        for gx in range(gx1, gx2 + 1):
+            for gy in range(gy1, gy2 + 1):
+                # Cell center in world coordinates
+                px = gx * res
+                py = gy * res
+
+                # Vector from line start to point
+                apx = px - x1
+                apy = py - y1
+
+                # Project point onto line: t = (AP · AB) / |AB|²
+                t = (apx * dx + apy * dy) / length_sq
+
+                # Clamp t to [0, 1] to stay on segment
+                if t < 0:
+                    t = 0
+                elif t > 1:
+                    t = 1
+
+                # Closest point on segment
+                closest_x = x1 + t * dx
+                closest_y = y1 + t * dy
+
+                # Distance squared from cell to closest point
+                dist_x = px - closest_x
+                dist_y = py - closest_y
+                dist_sq = dist_x * dist_x + dist_y * dist_y
+
+                if dist_sq <= r_sq:
+                    self._blocked.add((gx, gy))
 
     def _build_obstacles(self) -> None:
         """Build obstacle map from PCB elements."""
@@ -192,14 +241,23 @@ class ObstacleMap:
         if radius <= 0:
             return (gx, gy) in self._blocked
 
-        # Check cells within radius
+        # Check cells within radius (using squared distance)
+        radius_sq = radius * radius
         gr = int(math.ceil(radius / self.resolution)) + 1
+        res = self.resolution
+
+        # Offset from grid center to query point
+        gcx, gcy = self._to_world(gx, gy)
+        off_x = x - gcx
+        off_y = y - gcy
+
         for dx in range(-gr, gr + 1):
             for dy in range(-gr, gr + 1):
                 if (gx + dx, gy + dy) in self._blocked:
-                    # Check actual distance
-                    wx, wy = self._to_world(gx + dx, gy + dy)
-                    if math.sqrt((wx - x) ** 2 + (wy - y) ** 2) <= radius:
+                    # Check actual distance (squared)
+                    dist_x = dx * res - off_x
+                    dist_y = dy * res - off_y
+                    if dist_x * dist_x + dist_y * dist_y <= radius_sq:
                         return True
         return False
 
@@ -213,3 +271,36 @@ class ObstacleMap:
         min_gx, min_gy = self._to_grid(info.min_x - 1, info.min_y - 1)
         max_gx, max_gy = self._to_grid(info.max_x + 1, info.max_y + 1)
         return (min_gx, min_gy, max_gx, max_gy)
+
+    def get_expanded_blocked(self, radius: float) -> set[tuple[int, int]]:
+        """
+        Get blocked cells expanded by a radius, with caching.
+
+        Args:
+            radius: Expansion radius in world units (mm)
+
+        Returns:
+            Set of blocked cells expanded by the given radius
+        """
+        if radius <= 0:
+            return self._blocked
+
+        # Convert to grid units and round to avoid floating point issues
+        grid_radius = int(round(radius / self.resolution * 100))  # Use centiunits for key
+
+        if grid_radius in self._expanded_cache:
+            return self._expanded_cache[grid_radius]
+
+        # Build expanded set
+        actual_grid_radius = int(math.ceil(radius / self.resolution))
+        radius_sq = actual_grid_radius * actual_grid_radius
+
+        expanded: set[tuple[int, int]] = set()
+        for gx, gy in self._blocked:
+            for dx in range(-actual_grid_radius, actual_grid_radius + 1):
+                for dy in range(-actual_grid_radius, actual_grid_radius + 1):
+                    if dx * dx + dy * dy <= radius_sq:
+                        expanded.add((gx + dx, gy + dy))
+
+        self._expanded_cache[grid_radius] = expanded
+        return expanded

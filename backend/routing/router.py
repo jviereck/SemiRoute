@@ -5,6 +5,7 @@ from backend.pcb.parser import PCBParser
 
 from .obstacles import ObstacleMap
 from .pathfinding import astar_search
+from .pending import PendingTraceStore
 
 
 class TraceRouter:
@@ -40,6 +41,9 @@ class TraceRouter:
 
         # Cache obstacle maps per layer
         self._obstacle_cache: dict[str, ObstacleMap] = {}
+
+        # Store for pending user-created traces
+        self.pending_store = PendingTraceStore(grid_resolution=grid_resolution)
 
         if cache_obstacles:
             self._build_obstacle_cache()
@@ -93,6 +97,11 @@ class TraceRouter:
             List of (x, y) waypoints defining the trace path.
             Returns empty list if no valid route found.
         """
+        # Get blocked cells from pending traces (excluding same-net traces)
+        pending_blocked = self.pending_store.get_blocked_cells(
+            layer, self.clearance, exclude_net_id=net_id
+        )
+
         # Get or build obstacle map
         if net_id is not None and layer in self._obstacle_cache:
             # Use cached map but compute allowed cells for this net
@@ -103,7 +112,8 @@ class TraceRouter:
                 start_x, start_y,
                 end_x, end_y,
                 width / 2,
-                allowed_cells=allowed_cells
+                allowed_cells=allowed_cells,
+                extra_blocked=pending_blocked
             )
         else:
             obstacle_map = self._get_obstacle_map(layer, net_id)
@@ -111,31 +121,38 @@ class TraceRouter:
                 obstacle_map,
                 start_x, start_y,
                 end_x, end_y,
-                width / 2
+                width / 2,
+                extra_blocked=pending_blocked
             )
 
         return path
 
     def _get_net_cells(self, layer: str, net_id: int) -> set[tuple[int, int]]:
-        """Get set of grid cells that belong to a specific net."""
+        """Get set of grid cells that belong to a specific net.
+
+        Note: Only includes cells within the actual pad/trace/via geometry,
+        NOT the clearance zone. This prevents allowed regions from extending
+        into areas where other obstacles might be.
+        """
         resolution = self.grid_resolution
         cells: set[tuple[int, int]] = set()
 
         def to_grid(x: float, y: float) -> tuple[int, int]:
             return (int(round(x / resolution)), int(round(y / resolution)))
 
-        # Add pad cells
+        # Add pad cells (only within pad geometry, no clearance)
         for pad in self.parser.pads:
             if layer not in pad.layers or pad.net_id != net_id:
                 continue
             gx, gy = to_grid(pad.x, pad.y)
-            # Add cells in a small radius around pad center
-            r = int((max(pad.width, pad.height) / 2 + self.clearance) / resolution) + 1
-            for dx in range(-r, r + 1):
-                for dy in range(-r, r + 1):
+            # Use rectangular bounds matching pad shape (not square)
+            rx = int((pad.width / 2) / resolution) + 1
+            ry = int((pad.height / 2) / resolution) + 1
+            for dx in range(-rx, rx + 1):
+                for dy in range(-ry, ry + 1):
                     cells.add((gx + dx, gy + dy))
 
-        # Add trace cells
+        # Add trace cells (only within trace geometry, no clearance)
         for trace in self.parser.get_traces_by_layer(layer):
             if trace.net_id != net_id:
                 continue
@@ -153,17 +170,19 @@ class TraceRouter:
                 px = x1 + t * (x2 - x1)
                 py = y1 + t * (y2 - y1)
                 gx, gy = to_grid(px, py)
-                r = int((trace.width / 2 + self.clearance) / resolution) + 1
+                # Only cover the actual trace width
+                r = int((trace.width / 2) / resolution) + 1
                 for ddx in range(-r, r + 1):
                     for ddy in range(-r, r + 1):
                         cells.add((gx + ddx, gy + ddy))
 
-        # Add via cells
+        # Add via cells (only within via geometry, no clearance)
         for via in self.parser.vias:
             if via.net_id != net_id:
                 continue
             gx, gy = to_grid(via.x, via.y)
-            r = int((via.size / 2 + self.clearance) / resolution) + 1
+            # Only cover the actual via area
+            r = int((via.size / 2) / resolution) + 1
             for dx in range(-r, r + 1):
                 for dy in range(-r, r + 1):
                     cells.add((gx + dx, gy + dy))

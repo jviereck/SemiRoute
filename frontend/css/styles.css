@@ -357,3 +357,105 @@ body.trace-mode-active #svg-container {
     stroke-width: 0.4 !important;
     filter: brightness(1.5) drop-shadow(0 0 2px currentColor);
 }
+
+/* Routes list panel */
+.routes-list {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: 8px;
+}
+
+.routes-list .hint {
+    color: #666;
+    font-style: italic;
+    font-size: 0.85rem;
+    padding: 8px 0;
+}
+
+.route-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: #333;
+    margin-bottom: 4px;
+    font-size: 0.85rem;
+    transition: opacity 0.2s, background 0.2s;
+}
+
+.route-item:hover {
+    background: #3a3a3a;
+}
+
+.route-item.hidden-route {
+    opacity: 0.4;
+}
+
+.route-item .layer-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.route-item .route-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+}
+
+.route-item .toggle-btn,
+.route-item .remove-btn {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 0.9rem;
+    border-radius: 3px;
+    transition: color 0.2s, background 0.2s;
+    flex-shrink: 0;
+}
+
+.route-item .toggle-btn:hover {
+    color: #4fc3f7;
+    background: rgba(79, 195, 247, 0.1);
+}
+
+.route-item .remove-btn:hover {
+    color: #f44336;
+    background: rgba(244, 67, 54, 0.1);
+}
+
+.route-item .toggle-btn.hidden-icon {
+    color: #555;
+}
+
+.routes-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.small-btn {
+    flex: 1;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    background: #3a3a3a;
+    color: #e0e0e0;
+    transition: background 0.2s;
+}
+
+.small-btn:hover:not(:disabled) {
+    background: #4a4a4a;
+}
+
+.small-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

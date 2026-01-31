@@ -453,9 +453,14 @@ class SVGViewer {
 
     /**
      * Confirm pending trace and make it permanent.
+     * @param {Array} path - Array of [x, y] points
+     * @param {string} layer - Layer name (e.g., 'F.Cu')
+     * @param {number} width - Trace width in mm
+     * @param {string} traceId - Unique trace ID for tracking
+     * @returns {string|null} The trace ID if successful
      */
-    confirmPendingTrace(path, layer, width) {
-        if (!this.svg || path.length < 2) return;
+    confirmPendingTrace(path, layer, width, traceId = null) {
+        if (!this.svg || path.length < 2) return null;
 
         // Layer colors
         const layerColors = {
@@ -490,9 +495,56 @@ class SVGViewer {
         pathEl.setAttribute('stroke-opacity', '0.9');
         pathEl.setAttribute('class', 'user-trace');
         pathEl.setAttribute('data-layer', layer);
+        if (traceId) {
+            pathEl.setAttribute('data-trace-id', traceId);
+        }
         userGroup.appendChild(pathEl);
 
         // Clear only the pending trace preview (not the start marker)
         this.clearPendingTrace();
+
+        return traceId;
+    }
+
+    /**
+     * Set visibility of all traces with the given ID.
+     * @param {string} traceId - The trace ID
+     * @param {boolean} visible - Whether to show or hide
+     */
+    setTraceVisible(traceId, visible) {
+        if (!this.svg) return;
+
+        const traceEls = this.svg.querySelectorAll(`[data-trace-id="${traceId}"]`);
+        traceEls.forEach(el => {
+            el.style.display = visible ? '' : 'none';
+        });
+    }
+
+    /**
+     * Remove all traces with the given ID.
+     * @param {string} traceId - The trace ID to remove
+     * @returns {boolean} True if any traces were found and removed
+     */
+    removeTraceById(traceId) {
+        if (!this.svg) return false;
+
+        const traceEls = this.svg.querySelectorAll(`[data-trace-id="${traceId}"]`);
+        if (traceEls.length > 0) {
+            traceEls.forEach(el => el.remove());
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Clear all user traces and vias.
+     */
+    clearAllUserTraces() {
+        if (!this.svg) return;
+
+        const userGroup = this.svg.getElementById('user-traces');
+        if (userGroup) {
+            userGroup.innerHTML = '';
+        }
     }
 }

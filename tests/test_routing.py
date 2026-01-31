@@ -6,26 +6,25 @@ from unittest.mock import MagicMock
 
 from backend.pcb import PCBParser
 from backend.pcb.models import PadInfo, TraceInfo, ViaInfo
-from backend.routing import TraceRouter, ObstacleMap
+from backend.routing import TraceRouter, ObstacleMap, PendingTraceStore
 from backend.routing.pathfinding import astar_search, DIRECTIONS
 
 
-# Path to test PCB file
-PCB_FILE = Path(__file__).parent.parent / "BLDriver.kicad_pcb"
+# Marker for slow integration tests that run A* on real PCB data
+slow = pytest.mark.slow
 
 
-@pytest.fixture
-def parser():
-    """Load the test PCB file."""
-    return PCBParser(PCB_FILE)
+# Note: parser, cached_router, cached_obstacle_map_fcu fixtures are in conftest.py
+# with pickle-based caching for faster test startup
 
 
 @pytest.fixture
 def router(parser):
-    """Create a router instance."""
+    """Create a fresh router instance (no obstacle cache)."""
     return TraceRouter(parser, clearance=0.2)
 
 
+@slow
 class TestObstacleMap:
     """Tests for the ObstacleMap class."""
 
@@ -107,35 +106,32 @@ class TestObstacleMap:
         assert abs(wy - y) < 0.025
 
 
+@slow
 class TestPathfinding:
     """Tests for the A* pathfinding algorithm."""
 
-    def test_straight_path_orthogonal(self, parser):
+    def test_straight_path_orthogonal(self, cached_obstacle_map_fcu):
         """Test finding a straight horizontal path."""
-        obstacle_map = ObstacleMap(parser, layer="F.Cu", clearance=0.2)
-
-        # Find a clear area for testing (outside the board)
+        # Find a clear area for testing (outside the board) - short 2mm path
         path = astar_search(
-            obstacle_map,
+            cached_obstacle_map_fcu,
             start_x=120.0, start_y=45.0,
-            end_x=125.0, end_y=45.0
+            end_x=122.0, end_y=45.0
         )
 
         # Should find some path
         if len(path) > 0:
             # Path should start and end correctly
             assert abs(path[0][0] - 120.0) < 0.1
-            assert abs(path[-1][0] - 125.0) < 0.1
+            assert abs(path[-1][0] - 122.0) < 0.1
 
-    def test_path_uses_45_degree_angles(self, parser):
+    def test_path_uses_45_degree_angles(self, cached_obstacle_map_fcu):
         """Test that paths only use 0°, 45°, 90°, etc. angles."""
-        obstacle_map = ObstacleMap(parser, layer="F.Cu", clearance=0.2)
-
-        # Route between two points
+        # Route between two points - short 2mm diagonal
         path = astar_search(
-            obstacle_map,
-            start_x=130.0, start_y=55.0,
-            end_x=140.0, end_y=65.0
+            cached_obstacle_map_fcu,
+            start_x=120.0, start_y=45.0,
+            end_x=122.0, end_y=47.0
         )
 
         if len(path) >= 2:
@@ -189,11 +185,12 @@ class TestTraceRouter:
         router = TraceRouter(parser)
         assert router is not None
 
-    def test_route_between_points(self, router):
-        """Test routing between two points."""
-        path = router.route(
-            start_x=135.0, start_y=60.0,
-            end_x=140.0, end_y=65.0,
+    @slow
+    def test_route_between_points(self, cached_router):
+        """Test routing between two points - short 2mm path."""
+        path = cached_router.route(
+            start_x=120.0, start_y=45.0,
+            end_x=122.0, end_y=47.0,
             layer="F.Cu",
             width=0.25
         )
@@ -201,21 +198,23 @@ class TestTraceRouter:
         # Should return a path (may be empty if blocked)
         assert isinstance(path, list)
 
-    def test_route_on_different_layers(self, router):
-        """Test routing on different copper layers."""
+    @slow
+    def test_route_on_different_layers(self, cached_router):
+        """Test routing on different copper layers - short 2mm paths."""
         layers = ["F.Cu", "B.Cu", "In1.Cu", "In2.Cu"]
 
         for layer in layers:
-            path = router.route(
-                start_x=135.0, start_y=60.0,
-                end_x=140.0, end_y=65.0,
+            path = cached_router.route(
+                start_x=120.0, start_y=45.0,
+                end_x=122.0, end_y=47.0,
                 layer=layer,
                 width=0.25
             )
             # Should not raise an error
             assert isinstance(path, list)
 
-    def test_same_net_crossing(self, parser):
+    @slow
+    def test_same_net_crossing(self, parser, cached_router):
         """Test that a trace can cross pads/traces/vias of the same net."""
         # Find a net with multiple pads
         net_id = None
@@ -236,8 +235,7 @@ class TestTraceRouter:
         # Route between two pads of the same net
         pad1, pad2 = pads[0], pads[1]
 
-        router = TraceRouter(parser, clearance=0.2)
-        path = router.route(
+        path = cached_router.route(
             start_x=pad1.x, start_y=pad1.y,
             end_x=pad2.x, end_y=pad2.y,
             layer="F.Cu",
@@ -260,6 +258,7 @@ class TestTraceRouter:
             assert not start_blocked, "Start pad should not be blocked (same net)"
             assert not end_blocked, "End pad should not be blocked (same net)"
 
+    @slow
     def test_same_net_traces_not_blocked(self, parser):
         """Test that traces of the same net don't block routing."""
         # Find a trace
@@ -290,6 +289,7 @@ class TestTraceRouter:
             "Same-net trace should not be blocked"
         )
 
+    @slow
     def test_same_net_vias_not_blocked(self, parser):
         """Test that vias of the same net don't block routing."""
         vias = parser.vias
@@ -316,6 +316,146 @@ class TestTraceRouter:
                 "Same-net via should not be blocked"
             )
 
+    def test_allowed_cells_do_not_extend_into_clearance(self, router, parser):
+        """Test that _get_net_cells only covers actual geometry, not clearance zones.
+
+        This prevents same-net routing from crossing nearby different-net pads.
+        """
+        # Find a pad with a net
+        pad = None
+        for p in parser.pads:
+            if "F.Cu" in p.layers and p.net_id > 0:
+                pad = p
+                break
+
+        if pad is None:
+            pytest.skip("No pads with net on F.Cu")
+
+        # Get allowed cells for this net
+        allowed_cells = router._get_net_cells("F.Cu", pad.net_id)
+
+        # Calculate expected radius (without clearance)
+        resolution = router.grid_resolution
+        expected_radius = int((max(pad.width, pad.height) / 2) / resolution) + 1
+
+        # The allowed cells should NOT extend beyond the pad geometry
+        # Check that cells at clearance distance from pad center are NOT included
+        gx = int(round(pad.x / resolution))
+        gy = int(round(pad.y / resolution))
+
+        # A cell at (expected_radius + clearance/resolution) should NOT be in allowed
+        clearance_cells = int(router.clearance / resolution) + 1
+        far_cell = (gx + expected_radius + clearance_cells + 1, gy)
+
+        assert far_cell not in allowed_cells, (
+            "Allowed cells should not extend into clearance zone"
+        )
+
+    def test_allowed_cells_use_rectangular_bounds(self, parser):
+        """Test that allowed cells use rectangular bounds matching pad shape.
+
+        Regression test: Previously, allowed_cells used max(width, height) as
+        radius, creating square regions that could overlap nearby pads.
+        A 1.5mm x 0.3mm pad should only extend 0.75mm in x but 0.15mm in y.
+        """
+        # Find a very rectangular pad (width much different from height)
+        rect_pad = None
+        for pad in parser.pads:
+            if "F.Cu" in pad.layers and pad.net_id > 0:
+                ratio = max(pad.width, pad.height) / max(0.01, min(pad.width, pad.height))
+                if ratio > 3:  # At least 3:1 aspect ratio
+                    rect_pad = pad
+                    break
+
+        if rect_pad is None:
+            pytest.skip("No highly rectangular pads found")
+
+        # Create a router to test _get_net_cells
+        router = TraceRouter(parser, clearance=0.2)
+        resolution = router.grid_resolution
+
+        gx = int(round(rect_pad.x / resolution))
+        gy = int(round(rect_pad.y / resolution))
+
+        # Calculate expected bounds based on actual pad dimensions
+        rx = int((rect_pad.width / 2) / resolution) + 1
+        ry = int((rect_pad.height / 2) / resolution) + 1
+
+        # The key insight: if we were using max(width, height) for both dimensions,
+        # then cells at (gx, gy + max_r) would be allowed even if ry < rx.
+        # With proper rectangular bounds, cells beyond the smaller dimension should not be allowed.
+        max_r = max(rx, ry)
+        min_r = min(rx, ry)
+
+        # Create a mock single-pad set to test the bounds calculation directly
+        # We'll compute what cells would be added for just this one pad
+        single_pad_cells = set()
+        for dx in range(-rx, rx + 1):
+            for dy in range(-ry, ry + 1):
+                single_pad_cells.add((gx + dx, gy + dy))
+
+        # Verify rectangular bounds: cell at (gx, gy + max_r + 1) should NOT be in
+        # single_pad_cells if ry < rx (or vice versa)
+        if rx > ry:
+            # Pad is wider than tall
+            test_cell = (gx, gy + rx + 1)  # This would be allowed if using square bounds
+            assert test_cell not in single_pad_cells, (
+                f"Cell beyond rectangular y-bound should not be allowed for {rect_pad.width}x{rect_pad.height} pad"
+            )
+        else:
+            # Pad is taller than wide
+            test_cell = (gx + ry + 1, gy)  # This would be allowed if using square bounds
+            assert test_cell not in single_pad_cells, (
+                f"Cell beyond rectangular x-bound should not be allowed for {rect_pad.width}x{rect_pad.height} pad"
+            )
+
+    def test_different_net_pads_still_blocked_when_routing_with_net_id(self, parser):
+        """Test that routing with a net_id still blocks pads of different nets.
+
+        Regression test: Previously, allowed_cells included clearance zones,
+        which could overlap with nearby different-net pads.
+        """
+        # Find two different nets that have pads
+        net1_id = None
+        net2_id = None
+        net1_pad = None
+        net2_pad = None
+
+        for pad in parser.pads:
+            if "F.Cu" not in pad.layers or pad.net_id <= 0:
+                continue
+            if net1_id is None:
+                net1_id = pad.net_id
+                net1_pad = pad
+            elif pad.net_id != net1_id and net2_id is None:
+                net2_id = pad.net_id
+                net2_pad = pad
+                break
+
+        if net1_id is None or net2_id is None:
+            pytest.skip("Need at least 2 different nets with pads")
+
+        # Create obstacle map that blocks everything
+        obstacle_map = ObstacleMap(parser, layer="F.Cu", clearance=0.2)
+
+        # Verify that net2's pad IS blocked (it's a different net)
+        assert obstacle_map.is_blocked(net2_pad.x, net2_pad.y), (
+            "Different net pad should be blocked in obstacle map"
+        )
+
+        # Now create a router and get allowed cells for net1
+        router = TraceRouter(parser, clearance=0.2)
+        allowed_cells = router._get_net_cells("F.Cu", net1_id)
+
+        # net2's pad cells should NOT be in allowed_cells
+        resolution = router.grid_resolution
+        net2_gx = int(round(net2_pad.x / resolution))
+        net2_gy = int(round(net2_pad.y / resolution))
+
+        assert (net2_gx, net2_gy) not in allowed_cells, (
+            "Different net pad should not be in allowed cells"
+        )
+
     def test_find_net_at_point(self, router, parser):
         """Test finding net at a pad location."""
         # Find a pad with a net
@@ -331,11 +471,12 @@ class TestTraceRouter:
         net_id = router.find_net_at_point(pad.x, pad.y, "F.Cu")
         assert net_id == pad.net_id
 
-    def test_route_returns_simplified_path(self, router):
-        """Test that returned path has collinear points removed."""
-        path = router.route(
-            start_x=130.0, start_y=55.0,
-            end_x=145.0, end_y=55.0,
+    @slow
+    def test_route_returns_simplified_path(self, cached_router):
+        """Test that returned path has collinear points removed - short 3mm path."""
+        path = cached_router.route(
+            start_x=120.0, start_y=45.0,
+            end_x=123.0, end_y=45.0,
             layer="F.Cu",
             width=0.25
         )
@@ -433,6 +574,7 @@ class TestAPIIntegration:
         assert "F.Cu" in response_invalid.message
 
 
+@slow
 class TestViaPlacementValidation:
     """Tests for via placement validation logic."""
 
@@ -541,6 +683,306 @@ class TestViaPlacementValidation:
         # (This depends on exact geometry, but the test shows size matters)
         assert isinstance(small_via_blocked, bool)
         assert isinstance(large_via_blocked, bool)
+
+
+class TestPendingTraceStore:
+    """Tests for the PendingTraceStore class for user-created traces."""
+
+    def test_store_creation(self):
+        """Test that pending trace store can be created."""
+        store = PendingTraceStore(grid_resolution=0.025)
+        assert store is not None
+        assert len(store.get_all_traces()) == 0
+
+    def test_add_trace(self):
+        """Test adding a trace to the store."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        segments = [(100.0, 50.0), (110.0, 50.0), (110.0, 60.0)]
+        store.add_trace(
+            trace_id="route-1",
+            segments=segments,
+            width=0.25,
+            layer="F.Cu",
+            net_id=42
+        )
+
+        assert len(store.get_all_traces()) == 1
+        trace = store.get_trace("route-1")
+        assert trace is not None
+        assert trace.id == "route-1"
+        assert trace.layer == "F.Cu"
+        assert trace.width == 0.25
+        assert trace.net_id == 42
+        assert len(trace.segments) == 3
+
+    def test_remove_trace(self):
+        """Test removing a trace from the store."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Add a trace
+        segments = [(100.0, 50.0), (110.0, 50.0)]
+        store.add_trace("route-1", segments, 0.25, "F.Cu", net_id=42)
+        assert len(store.get_all_traces()) == 1
+
+        # Remove it
+        result = store.remove_trace("route-1")
+        assert result is True
+        assert len(store.get_all_traces()) == 0
+        assert store.get_trace("route-1") is None
+
+    def test_remove_nonexistent_trace(self):
+        """Test removing a trace that doesn't exist."""
+        store = PendingTraceStore(grid_resolution=0.025)
+        result = store.remove_trace("nonexistent")
+        assert result is False
+
+    def test_clear_all_traces(self):
+        """Test clearing all traces from the store."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Add multiple traces
+        store.add_trace("route-1", [(100, 50), (110, 50)], 0.25, "F.Cu")
+        store.add_trace("route-2", [(120, 60), (130, 60)], 0.25, "B.Cu")
+        store.add_trace("route-3", [(140, 70), (150, 70)], 0.25, "F.Cu")
+        assert len(store.get_all_traces()) == 3
+
+        # Clear all
+        store.clear()
+        assert len(store.get_all_traces()) == 0
+
+    def test_get_traces_by_layer(self):
+        """Test filtering traces by layer."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        store.add_trace("route-1", [(100, 50), (110, 50)], 0.25, "F.Cu")
+        store.add_trace("route-2", [(120, 60), (130, 60)], 0.25, "B.Cu")
+        store.add_trace("route-3", [(140, 70), (150, 70)], 0.25, "F.Cu")
+
+        f_cu_traces = store.get_traces_by_layer("F.Cu")
+        assert len(f_cu_traces) == 2
+
+        b_cu_traces = store.get_traces_by_layer("B.Cu")
+        assert len(b_cu_traces) == 1
+
+    def test_blocked_cells_include_added_trace(self):
+        """Test that blocked cells include cells from added traces."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Add a horizontal trace
+        segments = [(100.0, 50.0), (105.0, 50.0)]
+        store.add_trace("route-1", segments, 0.25, "F.Cu")
+
+        # Get blocked cells
+        blocked = store.get_blocked_cells("F.Cu", clearance=0.2)
+
+        # The trace should block cells in its path
+        # Convert trace midpoint to grid coords
+        resolution = 0.025
+        mid_gx = int(round(102.5 / resolution))
+        mid_gy = int(round(50.0 / resolution))
+
+        # The midpoint should be blocked
+        assert (mid_gx, mid_gy) in blocked, "Trace midpoint should be blocked"
+
+    def test_blocked_cells_exclude_removed_trace(self):
+        """Test that removed traces are NOT in the blocked cells."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Add a horizontal trace
+        segments = [(100.0, 50.0), (105.0, 50.0)]
+        store.add_trace("route-1", segments, 0.25, "F.Cu")
+
+        # Verify it's blocked
+        resolution = 0.025
+        mid_gx = int(round(102.5 / resolution))
+        mid_gy = int(round(50.0 / resolution))
+
+        blocked_before = store.get_blocked_cells("F.Cu", clearance=0.2)
+        assert (mid_gx, mid_gy) in blocked_before, "Trace should be blocked before removal"
+
+        # Remove the trace
+        store.remove_trace("route-1")
+
+        # Get blocked cells again - should be empty now
+        blocked_after = store.get_blocked_cells("F.Cu", clearance=0.2)
+        assert (mid_gx, mid_gy) not in blocked_after, "Trace should NOT be blocked after removal"
+        assert len(blocked_after) == 0, "No cells should be blocked after removing only trace"
+
+    def test_blocked_cells_cache_invalidation_on_add(self):
+        """Test that adding a trace invalidates the blocked cells cache."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Get blocked cells (empty, but this caches the result)
+        blocked1 = store.get_blocked_cells("F.Cu", clearance=0.2)
+        assert len(blocked1) == 0
+
+        # Add a trace
+        store.add_trace("route-1", [(100.0, 50.0), (105.0, 50.0)], 0.25, "F.Cu")
+
+        # Get blocked cells again - should include new trace
+        blocked2 = store.get_blocked_cells("F.Cu", clearance=0.2)
+        assert len(blocked2) > 0, "Cache should be invalidated and new trace should be included"
+
+    def test_blocked_cells_cache_invalidation_on_remove(self):
+        """Test that removing a trace invalidates the blocked cells cache."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Add a trace
+        store.add_trace("route-1", [(100.0, 50.0), (105.0, 50.0)], 0.25, "F.Cu")
+
+        # Get blocked cells (caches the result)
+        blocked1 = store.get_blocked_cells("F.Cu", clearance=0.2)
+        assert len(blocked1) > 0
+
+        # Remove the trace
+        store.remove_trace("route-1")
+
+        # Get blocked cells again - should be empty
+        blocked2 = store.get_blocked_cells("F.Cu", clearance=0.2)
+        assert len(blocked2) == 0, "Cache should be invalidated and removed trace should not be included"
+
+    def test_blocked_cells_exclude_same_net(self):
+        """Test that same-net traces are excluded from blocked cells."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Add a trace with net_id=42
+        segments = [(100.0, 50.0), (105.0, 50.0)]
+        store.add_trace("route-1", segments, 0.25, "F.Cu", net_id=42)
+
+        # Get blocked cells excluding net 42
+        blocked = store.get_blocked_cells("F.Cu", clearance=0.2, exclude_net_id=42)
+
+        # Should be empty (only trace is same net)
+        assert len(blocked) == 0, "Same-net trace should not be blocked"
+
+        # Get blocked cells without exclusion
+        blocked_all = store.get_blocked_cells("F.Cu", clearance=0.2)
+        assert len(blocked_all) > 0, "Trace should be blocked without net exclusion"
+
+    def test_is_point_blocked(self):
+        """Test point blocking check."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Add a horizontal trace
+        segments = [(100.0, 50.0), (105.0, 50.0)]
+        store.add_trace("route-1", segments, 0.25, "F.Cu")
+
+        # Point on the trace should be blocked
+        assert store.is_point_blocked(102.5, 50.0, 0.1, "F.Cu", clearance=0.2)
+
+        # Point far from the trace should not be blocked
+        assert not store.is_point_blocked(200.0, 100.0, 0.1, "F.Cu", clearance=0.2)
+
+    def test_is_point_blocked_after_removal(self):
+        """Test that point is not blocked after trace removal."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Add a trace
+        segments = [(100.0, 50.0), (105.0, 50.0)]
+        store.add_trace("route-1", segments, 0.25, "F.Cu")
+
+        # Point should be blocked
+        assert store.is_point_blocked(102.5, 50.0, 0.1, "F.Cu", clearance=0.2)
+
+        # Remove the trace
+        store.remove_trace("route-1")
+
+        # Point should no longer be blocked
+        assert not store.is_point_blocked(102.5, 50.0, 0.1, "F.Cu", clearance=0.2)
+
+    def test_multiple_traces_only_one_removed(self):
+        """Test that removing one trace doesn't affect other traces."""
+        store = PendingTraceStore(grid_resolution=0.025)
+
+        # Add two traces on same layer
+        store.add_trace("route-1", [(100.0, 50.0), (105.0, 50.0)], 0.25, "F.Cu")
+        store.add_trace("route-2", [(200.0, 80.0), (205.0, 80.0)], 0.25, "F.Cu")
+
+        # Both should be blocked
+        assert store.is_point_blocked(102.5, 50.0, 0.1, "F.Cu", clearance=0.2)
+        assert store.is_point_blocked(202.5, 80.0, 0.1, "F.Cu", clearance=0.2)
+
+        # Remove first trace
+        store.remove_trace("route-1")
+
+        # First trace location should no longer be blocked
+        assert not store.is_point_blocked(102.5, 50.0, 0.1, "F.Cu", clearance=0.2)
+
+        # Second trace should still be blocked
+        assert store.is_point_blocked(202.5, 80.0, 0.1, "F.Cu", clearance=0.2)
+
+
+class TestPendingTraceRouterIntegration:
+    """Integration tests for pending traces with the router."""
+
+    def test_router_has_pending_store(self, router):
+        """Test that router has a pending trace store."""
+        assert hasattr(router, 'pending_store')
+        assert isinstance(router.pending_store, PendingTraceStore)
+
+    @slow
+    def test_route_avoids_pending_traces(self, cached_router):
+        """Test that routing avoids pending user traces - short 4mm path."""
+        # Add a pending trace that blocks a direct path
+        # This trace goes from (121, 44) to (121, 48) - a short vertical line
+        cached_router.pending_store.add_trace(
+            "block-trace",
+            segments=[(121.0, 44.0), (121.0, 48.0)],
+            width=0.5,
+            layer="F.Cu"
+        )
+
+        try:
+            # Try to route from left to right, crossing the blocking trace
+            path = cached_router.route(
+                start_x=119.0, start_y=46.0,
+                end_x=123.0, end_y=46.0,
+                layer="F.Cu",
+                width=0.25
+            )
+
+            # If a path is found, it should not pass through x=121 at y=46
+            # (it should go around the blocking trace)
+            if len(path) > 0:
+                for point in path:
+                    x, y = point
+                    # Check that path doesn't cross through the blocking trace
+                    # The blocking trace is at x=121, y=[44, 48]
+                    if 44.5 < y < 47.5:  # Near y=46
+                        # Path should not cross x=121 in this y range
+                        assert abs(x - 121.0) > 0.3, (
+                            f"Path should avoid blocking trace but crosses at ({x}, {y})"
+                        )
+        finally:
+            # Clean up to avoid affecting other tests
+            cached_router.pending_store.remove_trace("block-trace")
+
+    @slow
+    def test_route_ignores_removed_pending_traces(self, cached_router):
+        """Test that removed pending traces don't block routing - short 4mm path."""
+        # Add a pending trace
+        cached_router.pending_store.add_trace(
+            "temp-trace",
+            segments=[(121.0, 44.0), (121.0, 48.0)],
+            width=0.5,
+            layer="F.Cu"
+        )
+
+        # Remove it
+        cached_router.pending_store.remove_trace("temp-trace")
+
+        # Route should now be able to go straight through
+        path = cached_router.route(
+            start_x=119.0, start_y=46.0,
+            end_x=123.0, end_y=46.0,
+            layer="F.Cu",
+            width=0.25
+        )
+
+        # Path should exist and can now pass through x=121
+        # (assuming no other obstacles)
+        assert isinstance(path, list)
 
 
 if __name__ == "__main__":

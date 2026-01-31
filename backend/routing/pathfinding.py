@@ -21,11 +21,63 @@ DIRECTIONS = (
 SQRT2 = math.sqrt(2)
 DIRECTION_COSTS = (1.0, SQRT2, 1.0, SQRT2, 1.0, SQRT2, 1.0, SQRT2)
 
-# Penalty for changing direction (encourages straighter traces)
-DIRECTION_CHANGE_PENALTY = 0.05
+# Penalties for direction changes based on angle difference
+# Index diff 0 = same direction (no turn)
+# Index diff 1 = 45° turn (slight bend)
+# Index diff 2 = 90° turn (sharp corner)
+# Index diff 3 = 135° turn (very sharp)
+# Index diff 4 = 180° turn (U-turn, should be avoided)
+# Note: Direction indices wrap around (8 directions)
+TURN_PENALTIES = {
+    0: 0.0,    # No turn - free
+    1: 0.1,    # 45° turn - small penalty (preferred bends)
+    2: 0.5,    # 90° turn - moderate penalty
+    3: 1.5,    # 135° turn - high penalty (avoid)
+    4: 3.0,    # 180° turn - very high penalty (almost never)
+}
 
 # Heuristic weight for weighted A* (>1 = faster but less optimal)
 HEURISTIC_WEIGHT = 1.5
+
+
+def _expand_blocked_cells(
+    blocked: set[tuple[int, int]],
+    radius: float,
+    resolution: float
+) -> set[tuple[int, int]]:
+    """
+    Expand blocked cells by a radius to account for trace width.
+
+    This ensures that when we check if a cell is passable, we're checking
+    if the entire trace (not just its center) would fit through.
+
+    Args:
+        blocked: Set of blocked grid cells
+        radius: Expansion radius in world units (mm)
+        resolution: Grid cell size (mm)
+
+    Returns:
+        Expanded set of blocked cells
+    """
+    if not blocked or radius <= 0:
+        return blocked
+
+    # Calculate expansion in grid cells
+    grid_radius = int(math.ceil(radius / resolution))
+    if grid_radius == 0:
+        return blocked
+
+    expanded: set[tuple[int, int]] = set()
+
+    for gx, gy in blocked:
+        # Add all cells within grid_radius
+        for dx in range(-grid_radius, grid_radius + 1):
+            for dy in range(-grid_radius, grid_radius + 1):
+                # Use circular expansion for accuracy
+                if dx * dx + dy * dy <= grid_radius * grid_radius:
+                    expanded.add((gx + dx, gy + dy))
+
+    return expanded
 
 
 def heuristic(x1: int, y1: int, x2: int, y2: int) -> float:
@@ -40,7 +92,8 @@ def astar_search(
     start_x: float, start_y: float,
     end_x: float, end_y: float,
     trace_radius: float = 0,
-    allowed_cells: set[tuple[int, int]] | None = None
+    allowed_cells: set[tuple[int, int]] | None = None,
+    extra_blocked: set[tuple[int, int]] | None = None
 ) -> list[tuple[float, float]]:
     """
     Find shortest path using weighted A* algorithm with 8-direction movement.
@@ -58,13 +111,23 @@ def astar_search(
         trace_radius: Half of trace width for collision checking
         allowed_cells: Optional set of cells that are allowed even if blocked
                       (used for same-net routing)
+        extra_blocked: Optional set of additional blocked cells
+                      (used for pending user traces)
 
     Returns:
         List of (x, y) waypoints in world coordinates, or empty list if no path
     """
     resolution = obstacle_map.resolution
-    blocked = obstacle_map._blocked  # Direct access for speed
     allowed = allowed_cells or set()
+    extra = extra_blocked or set()
+
+    # Get blocked cells (expanded by trace radius if needed)
+    # Uses cached expansion from obstacle map for speed
+    if trace_radius > 0:
+        blocked = obstacle_map.get_expanded_blocked(trace_radius)
+        extra = _expand_blocked_cells(extra, trace_radius, resolution) if extra else set()
+    else:
+        blocked = obstacle_map._blocked
 
     # Convert to grid coordinates
     start_gx = int(round(start_x / resolution))
@@ -123,20 +186,28 @@ def astar_search(
 
             # Check if blocked (unless it's the goal or in allowed set)
             is_goal = (nx == end_gx and ny == end_gy)
-            if not is_goal and npos in blocked and npos not in allowed:
+            is_blocked = (npos in blocked or npos in extra) and npos not in allowed
+            if not is_goal and is_blocked:
                 continue
 
             # For diagonal moves, check corners to prevent cutting through
             if dx != 0 and dy != 0:
                 c1 = (cx + dx, cy)
                 c2 = (cx, cy + dy)
-                if (c1 in blocked and c1 not in allowed) or (c2 in blocked and c2 not in allowed):
+                c1_blocked = (c1 in blocked or c1 in extra) and c1 not in allowed
+                c2_blocked = (c2 in blocked or c2 in extra) and c2 not in allowed
+                if c1_blocked or c2_blocked:
                     continue
 
             # Calculate cost
             move_cost = DIRECTION_COSTS[dir_idx]
             if c_dir >= 0 and c_dir != dir_idx:
-                move_cost += DIRECTION_CHANGE_PENALTY
+                # Calculate turn angle (minimum distance in direction indices)
+                # e.g., from N(0) to E(2) = 2 steps, from N(0) to NW(7) = 1 step
+                dir_diff = abs(dir_idx - c_dir)
+                if dir_diff > 4:
+                    dir_diff = 8 - dir_diff  # Wrap around
+                move_cost += TURN_PENALTIES.get(dir_diff, 0.5)
 
             new_g = g + move_cost
 
