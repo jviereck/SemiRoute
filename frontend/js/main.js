@@ -8,6 +8,9 @@
     let viewer = null;
     let selectedNetId = null;
 
+    // Segment selection state
+    let selectedSegments = [];  // [{routeId, segmentIndex}, ...]
+
     // Trace mode state
     let appMode = 'select';  // 'select' | 'trace'
     // Routes: { id, segments: [{path, layer, width}], netId, visible }
@@ -243,6 +246,226 @@
         }
     }
 
+    /**
+     * Clear segment selection and highlights.
+     */
+    function clearSegmentSelection() {
+        selectedSegments = [];
+        viewer.clearSegmentHighlights();
+    }
+
+    /**
+     * Select a single segment (clears previous selection).
+     * @param {string} routeId - The route ID
+     * @param {number} segmentIndex - The segment index
+     */
+    function selectSegment(routeId, segmentIndex) {
+        clearSegmentSelection();
+        selectedSegments = [{ routeId, segmentIndex }];
+        viewer.highlightSegments(selectedSegments);
+    }
+
+    /**
+     * Toggle a segment in the selection (for shift+click multi-select).
+     * @param {string} routeId - The route ID
+     * @param {number} segmentIndex - The segment index
+     */
+    function toggleSegmentSelection(routeId, segmentIndex) {
+        const idx = selectedSegments.findIndex(
+            s => s.routeId === routeId && s.segmentIndex === segmentIndex
+        );
+
+        if (idx >= 0) {
+            // Already selected - remove it
+            selectedSegments.splice(idx, 1);
+        } else {
+            // Not selected - add it
+            selectedSegments.push({ routeId, segmentIndex });
+        }
+
+        // Update highlights
+        viewer.clearSegmentHighlights();
+        viewer.highlightSegments(selectedSegments);
+    }
+
+    /**
+     * Select all segments in a route (for double-click).
+     * @param {string} routeId - The route ID
+     */
+    function selectFullRoute(routeId) {
+        const route = userRoutes.find(r => r.id === routeId);
+        if (!route) return;
+
+        clearSegmentSelection();
+
+        // Add all segments from this route
+        for (let i = 0; i < route.segments.length; i++) {
+            selectedSegments.push({ routeId, segmentIndex: i });
+        }
+
+        viewer.highlightSegments(selectedSegments);
+    }
+
+    /**
+     * Delete all selected segments.
+     */
+    async function deleteSelectedSegments() {
+        if (selectedSegments.length === 0) return;
+
+        // Group selected segments by route
+        const segmentsByRoute = {};
+        for (const seg of selectedSegments) {
+            if (!segmentsByRoute[seg.routeId]) {
+                segmentsByRoute[seg.routeId] = [];
+            }
+            segmentsByRoute[seg.routeId].push(seg.segmentIndex);
+        }
+
+        // Process each route
+        for (const routeId of Object.keys(segmentsByRoute)) {
+            const route = userRoutes.find(r => r.id === routeId);
+            if (!route) continue;
+
+            // Sort indices in descending order to remove from end first
+            const indices = segmentsByRoute[routeId].sort((a, b) => b - a);
+
+            for (const segmentIndex of indices) {
+                // Remove from SVG
+                viewer.removeSegment(routeId, segmentIndex);
+
+                // Delete from backend
+                const segmentId = `${routeId}-seg${segmentIndex}`;
+                try {
+                    await fetch(`/api/traces/${segmentId}`, { method: 'DELETE' });
+                } catch (error) {
+                    // Ignore errors for non-existent segments
+                }
+
+                // Remove from route.segments array
+                if (segmentIndex < route.segments.length) {
+                    route.segments.splice(segmentIndex, 1);
+                }
+            }
+
+            // If route is now empty, remove it entirely
+            if (route.segments.length === 0) {
+                const idx = userRoutes.findIndex(r => r.id === routeId);
+                if (idx >= 0) {
+                    userRoutes.splice(idx, 1);
+                }
+
+                // Remove from list UI
+                const item = document.querySelector(`.route-item[data-route-id="${routeId}"]`);
+                if (item) {
+                    item.remove();
+                }
+            } else {
+                // Re-index remaining segments
+                reindexRouteSegments(routeId);
+                updateRouteListItem(routeId);
+            }
+        }
+
+        // Show hint if list is empty
+        const listEl = document.getElementById('routes-list');
+        if (listEl.children.length === 0) {
+            listEl.innerHTML = '<p class="hint">No routes yet</p>';
+        }
+
+        updateRouteCount();
+        updateClearAllButton();
+        clearSegmentSelection();
+    }
+
+    /**
+     * Re-index route segments after deletion.
+     * Updates both SVG data attributes and backend IDs.
+     * @param {string} routeId - The route ID
+     */
+    async function reindexRouteSegments(routeId) {
+        const route = userRoutes.find(r => r.id === routeId);
+        if (!route) return;
+
+        // Update SVG attributes for each remaining segment
+        for (let i = 0; i < route.segments.length; i++) {
+            // Find elements that might have wrong indices and update them
+            // We need to find elements by route ID and then fix their indices
+            const traces = document.querySelectorAll(`.user-trace[data-trace-id="${routeId}"]`);
+            const vias = document.querySelectorAll(`.user-via[data-trace-id="${routeId}"]`);
+            const holes = document.querySelectorAll(`.user-via-hole[data-trace-id="${routeId}"]`);
+
+            // Collect all elements and sort by their current index to maintain order
+            const allElements = [...traces, ...vias, ...holes];
+            const elementsByIndex = {};
+            for (const el of allElements) {
+                const idx = el.getAttribute('data-segment-index');
+                if (!elementsByIndex[idx]) {
+                    elementsByIndex[idx] = [];
+                }
+                elementsByIndex[idx].push(el);
+            }
+
+            // Reassign indices sequentially
+            const sortedIndices = Object.keys(elementsByIndex).map(Number).sort((a, b) => a - b);
+            for (let newIdx = 0; newIdx < sortedIndices.length; newIdx++) {
+                const oldIdx = sortedIndices[newIdx];
+                if (oldIdx !== newIdx) {
+                    for (const el of elementsByIndex[oldIdx]) {
+                        el.setAttribute('data-segment-index', newIdx.toString());
+                    }
+                }
+            }
+        }
+
+        // Re-register all segments with backend with correct IDs
+        for (let i = 0; i < route.segments.length; i++) {
+            const seg = route.segments[i];
+            const segmentId = `${routeId}-seg${i}`;
+            try {
+                await fetch('/api/traces', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: segmentId,
+                        segments: seg.path,
+                        width: seg.width,
+                        layer: seg.layer,
+                        net_id: route.netId || null
+                    })
+                });
+            } catch (error) {
+                console.error('Failed to re-register segment:', error);
+            }
+        }
+    }
+
+    /**
+     * Update a route's list item to reflect current segment count.
+     * @param {string} routeId - The route ID
+     */
+    function updateRouteListItem(routeId) {
+        const route = userRoutes.find(r => r.id === routeId);
+        if (!route) return;
+
+        const item = document.querySelector(`.route-item[data-route-id="${routeId}"]`);
+        if (!item) return;
+
+        const layer = getRoutePrimaryLayer(route);
+        const color = LAYER_COLORS[layer] || '#888888';
+        const routeNum = route.id.replace('route-', '');
+        const segCount = route.segments.length;
+
+        const label = item.querySelector('.route-label');
+        if (label) {
+            label.textContent = `Route ${routeNum} - ${layer} (${segCount} seg)`;
+        }
+
+        const indicator = item.querySelector('.layer-indicator');
+        if (indicator) {
+            indicator.style.background = color;
+        }
+    }
+
     // Continuous routing session state
     // - Mouse move: continuously routes to cursor position (debounced)
     // - Single click: commits segment, clicked point becomes new start
@@ -348,20 +571,49 @@
     }
 
     /**
-     * Find the best pad/via match at click coordinates.
+     * Find the best pad/via/user-trace match at click coordinates.
+     * @returns {Object|null} { type: 'pad'|'via'|'user-trace'|'user-via', element: Element } or null
      */
     function findBestMatchAtPoint(clickX, clickY) {
         // Get all elements at click point
         const elements = document.elementsFromPoint(clickX, clickY);
 
-        // Find all pads and vias at this point
+        // Find all element types at this point
         const padsAtPoint = elements.filter(el => el.classList.contains('pad'));
-        const viasAtPoint = elements.filter(el => el.classList.contains('via'));
+        const viasAtPoint = elements.filter(el => el.classList.contains('via') && !el.classList.contains('user-via'));
+        const userTracesAtPoint = elements.filter(el => el.classList.contains('user-trace'));
+        const userViasAtPoint = elements.filter(el => el.classList.contains('user-via'));
 
-        // Find the pad/via whose center is closest to click point
+        // Find the element whose center is closest to click point
         let bestMatch = null;
         let bestDistance = Infinity;
+        let bestType = null;
 
+        // Check user traces first (they're on top)
+        for (const trace of userTracesAtPoint) {
+            // For paths, use a small fixed distance since they're lines
+            const distance = 5;  // Prioritize if clicked directly
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestMatch = trace;
+                bestType = 'user-trace';
+            }
+        }
+
+        // Check user vias
+        for (const via of userViasAtPoint) {
+            const rect = via.getBoundingClientRect();
+            const centerX = rect.x + rect.width / 2;
+            const centerY = rect.y + rect.height / 2;
+            const distance = Math.sqrt((clickX - centerX) ** 2 + (clickY - centerY) ** 2);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestMatch = via;
+                bestType = 'user-via';
+            }
+        }
+
+        // Check pads
         for (const pad of padsAtPoint) {
             const rect = pad.getBoundingClientRect();
             const centerX = rect.x + rect.width / 2;
@@ -370,9 +622,11 @@
             if (distance < bestDistance) {
                 bestDistance = distance;
                 bestMatch = pad;
+                bestType = 'pad';
             }
         }
 
+        // Check vias
         for (const via of viasAtPoint) {
             const rect = via.getBoundingClientRect();
             const centerX = rect.x + rect.width / 2;
@@ -381,10 +635,14 @@
             if (distance < bestDistance) {
                 bestDistance = distance;
                 bestMatch = via;
+                bestType = 'via';
             }
         }
 
-        return bestMatch;
+        if (bestMatch) {
+            return { type: bestType, element: bestMatch };
+        }
+        return null;
     }
 
     /**
@@ -402,22 +660,60 @@
 
         // Single click: commit segment, make click point the new start
         container.addEventListener('click', (e) => {
-            const bestMatch = findBestMatchAtPoint(e.clientX, e.clientY);
+            const match = findBestMatchAtPoint(e.clientX, e.clientY);
 
             if (appMode === 'trace') {
-                handleTraceClick(e, bestMatch);
-            } else if (bestMatch) {
-                const netId = parseInt(bestMatch.dataset.net, 10);
-                selectNet(netId, bestMatch.dataset.netName);
+                // In trace mode, pass the element (or null) for routing
+                const element = match ? match.element : null;
+                handleTraceClick(e, element);
+            } else {
+                // In select mode, handle segment selection or net selection
+                if (match) {
+                    if (match.type === 'user-trace' || match.type === 'user-via') {
+                        // Clicked on a user-created segment
+                        const routeId = match.element.dataset.traceId;
+                        const segmentIndex = parseInt(match.element.dataset.segmentIndex, 10);
+
+                        if (routeId && !isNaN(segmentIndex)) {
+                            if (e.shiftKey) {
+                                // Shift+click: toggle selection
+                                toggleSegmentSelection(routeId, segmentIndex);
+                            } else {
+                                // Regular click: select only this segment
+                                selectSegment(routeId, segmentIndex);
+                            }
+                        }
+                    } else if (match.type === 'pad' || match.type === 'via') {
+                        // Clicked on a pad or via - clear segment selection and show net
+                        clearSegmentSelection();
+                        const netId = parseInt(match.element.dataset.net, 10);
+                        selectNet(netId, match.element.dataset.netName);
+                    }
+                } else {
+                    // Clicked on empty space - clear selection
+                    clearSegmentSelection();
+                    clearSelection();
+                }
             }
         });
 
-        // Double-click: commit and end routing
+        // Double-click: commit and end routing, or select full route
         container.addEventListener('dblclick', (e) => {
             if (appMode === 'trace' && routingSession) {
                 e.preventDefault();
                 e.stopPropagation();
                 handleTraceDoubleClick(e);
+            } else if (appMode === 'select') {
+                // In select mode, double-click on user trace/via selects full route
+                const match = findBestMatchAtPoint(e.clientX, e.clientY);
+                if (match && (match.type === 'user-trace' || match.type === 'user-via')) {
+                    const routeId = match.element.dataset.traceId;
+                    if (routeId) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        selectFullRoute(routeId);
+                    }
+                }
             }
         });
     }
@@ -649,6 +945,9 @@
     async function commitCurrentSegment(newStartX, newStartY) {
         if (!routingSession || !routingSession.pendingPath) return;
 
+        // Get the segment index (current length of sessionSegments)
+        const segmentIndex = routingSession.sessionSegments.length;
+
         // Store segment info (all segments share the session's routeId)
         const segment = {
             path: routingSession.pendingPath,
@@ -657,8 +956,8 @@
         };
         routingSession.sessionSegments.push(segment);
 
-        // Render as confirmed with the session's route ID (all segments share it)
-        viewer.confirmPendingTrace(segment.path, segment.layer, segment.width, routingSession.routeId);
+        // Render as confirmed with the session's route ID and segment index
+        viewer.confirmPendingTrace(segment.path, segment.layer, segment.width, routingSession.routeId, segmentIndex);
 
         // Move start point to new position
         routingSession.startPoint = { x: newStartX, y: newStartY };
@@ -710,9 +1009,12 @@
                 await commitCurrentSegment(lastPoint[0], lastPoint[1]);
             }
 
+            // Get the segment index for the via (matches the last committed segment)
+            const viaSegmentIndex = routingSession.sessionSegments.length - 1;
+
             // Add via at cursor position
             routingSession.sessionVias.push({ x, y, size: viaSize });
-            viewer.renderUserVia(x, y, viaSize, false);
+            viewer.renderUserVia(x, y, viaSize, false, routingSession.routeId, viaSegmentIndex);
 
             // Switch layer and set via location as new start point
             routingSession.currentLayer = newLayer;
@@ -947,7 +1249,18 @@
                 } else if (appMode === 'trace') {
                     toggleTraceMode();
                 } else {
-                    clearSelection();
+                    // In select mode, clear segment selection first, then net selection
+                    if (selectedSegments.length > 0) {
+                        clearSegmentSelection();
+                    } else {
+                        clearSelection();
+                    }
+                }
+            } else if (e.key === 'Backspace' || e.key === 'Delete') {
+                // Delete selected segments
+                if (selectedSegments.length > 0) {
+                    e.preventDefault();
+                    deleteSelectedSegments();
                 }
             } else if (e.key === 't' || e.key === 'T') {
                 toggleTraceMode();

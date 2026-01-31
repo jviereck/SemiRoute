@@ -419,8 +419,14 @@ class SVGViewer {
 
     /**
      * Render a user-placed via at the given coordinates.
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     * @param {number} size - Via size in mm
+     * @param {boolean} isPending - Whether this is a pending (uncommitted) via
+     * @param {string} routeId - Route ID for tracking
+     * @param {number} segmentIndex - Segment index within the route
      */
-    renderUserVia(x, y, size, isPending = true) {
+    renderUserVia(x, y, size, isPending = true, routeId = null, segmentIndex = null) {
         if (!this.svg) return;
 
         // Find or create user traces group
@@ -439,6 +445,12 @@ class SVGViewer {
         via.setAttribute('r', size / 2);
         via.setAttribute('fill', '#C8A832');
         via.setAttribute('class', isPending ? 'user-via pending-element' : 'user-via');
+        if (routeId) {
+            via.setAttribute('data-trace-id', routeId);
+        }
+        if (segmentIndex !== null) {
+            via.setAttribute('data-segment-index', segmentIndex.toString());
+        }
         userGroup.appendChild(via);
 
         // Create drill hole
@@ -448,6 +460,12 @@ class SVGViewer {
         hole.setAttribute('r', size / 4);  // Drill is typically half the via size
         hole.setAttribute('fill', '#1a1a1a');
         hole.setAttribute('class', isPending ? 'user-via-hole pending-element' : 'user-via-hole');
+        if (routeId) {
+            hole.setAttribute('data-trace-id', routeId);
+        }
+        if (segmentIndex !== null) {
+            hole.setAttribute('data-segment-index', segmentIndex.toString());
+        }
         userGroup.appendChild(hole);
     }
 
@@ -457,9 +475,10 @@ class SVGViewer {
      * @param {string} layer - Layer name (e.g., 'F.Cu')
      * @param {number} width - Trace width in mm
      * @param {string} traceId - Unique trace ID for tracking
+     * @param {number} segmentIndex - Segment index within the route
      * @returns {string|null} The trace ID if successful
      */
-    confirmPendingTrace(path, layer, width, traceId = null) {
+    confirmPendingTrace(path, layer, width, traceId = null, segmentIndex = null) {
         if (!this.svg || path.length < 2) return null;
 
         // Layer colors
@@ -497,6 +516,9 @@ class SVGViewer {
         pathEl.setAttribute('data-layer', layer);
         if (traceId) {
             pathEl.setAttribute('data-trace-id', traceId);
+        }
+        if (segmentIndex !== null) {
+            pathEl.setAttribute('data-segment-index', segmentIndex.toString());
         }
         userGroup.appendChild(pathEl);
 
@@ -546,5 +568,88 @@ class SVGViewer {
         if (userGroup) {
             userGroup.innerHTML = '';
         }
+    }
+
+    /**
+     * Highlight specific segments by adding the segment-selected class.
+     * @param {Array} segments - Array of {routeId, segmentIndex} objects
+     */
+    highlightSegments(segments) {
+        if (!this.svg) return;
+
+        for (const seg of segments) {
+            // Highlight traces
+            const traces = this.svg.querySelectorAll(
+                `.user-trace[data-trace-id="${seg.routeId}"][data-segment-index="${seg.segmentIndex}"]`
+            );
+            traces.forEach(el => el.classList.add('segment-selected'));
+
+            // Highlight vias (they mark the end of a segment/layer transition)
+            const vias = this.svg.querySelectorAll(
+                `.user-via[data-trace-id="${seg.routeId}"][data-segment-index="${seg.segmentIndex}"]`
+            );
+            vias.forEach(el => el.classList.add('segment-selected'));
+        }
+    }
+
+    /**
+     * Clear all segment selection highlights.
+     */
+    clearSegmentHighlights() {
+        if (!this.svg) return;
+
+        this.svg.querySelectorAll('.segment-selected').forEach(el => {
+            el.classList.remove('segment-selected');
+        });
+    }
+
+    /**
+     * Remove a specific segment from the SVG.
+     * @param {string} routeId - The route ID
+     * @param {number} segmentIndex - The segment index to remove
+     * @returns {boolean} True if any elements were removed
+     */
+    removeSegment(routeId, segmentIndex) {
+        if (!this.svg) return false;
+
+        let removed = false;
+
+        // Remove trace segments with matching route ID and segment index
+        const traces = this.svg.querySelectorAll(
+            `.user-trace[data-trace-id="${routeId}"][data-segment-index="${segmentIndex}"]`
+        );
+        traces.forEach(el => {
+            el.remove();
+            removed = true;
+        });
+
+        // Remove vias with matching route ID and segment index
+        const vias = this.svg.querySelectorAll(
+            `.user-via[data-trace-id="${routeId}"][data-segment-index="${segmentIndex}"]`
+        );
+        vias.forEach(el => el.remove());
+
+        // Remove via holes with matching route ID and segment index
+        const holes = this.svg.querySelectorAll(
+            `.user-via-hole[data-trace-id="${routeId}"][data-segment-index="${segmentIndex}"]`
+        );
+        holes.forEach(el => el.remove());
+
+        return removed;
+    }
+
+    /**
+     * Update the segment index attribute for elements.
+     * @param {string} routeId - The route ID
+     * @param {number} oldIndex - The current segment index
+     * @param {number} newIndex - The new segment index
+     */
+    updateSegmentIndex(routeId, oldIndex, newIndex) {
+        if (!this.svg) return;
+
+        const selector = `[data-trace-id="${routeId}"][data-segment-index="${oldIndex}"]`;
+        this.svg.querySelectorAll(selector).forEach(el => {
+            el.setAttribute('data-segment-index', newIndex.toString());
+        });
     }
 }

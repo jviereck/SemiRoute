@@ -335,13 +335,31 @@ body.trace-mode-active #svg-container {
     display: none;
 }
 
-/* User via styles */
+/* User trace and via styles */
+.user-trace {
+    pointer-events: stroke;
+    cursor: pointer;
+}
+
 .user-via {
-    pointer-events: none;
+    pointer-events: all;
+    cursor: pointer;
 }
 
 .user-via.pending-element {
     opacity: 0.7;
+}
+
+/* Segment selection highlight */
+.user-trace.segment-selected {
+    stroke: #00FF00 !important;
+    stroke-opacity: 1 !important;
+    filter: drop-shadow(0 0 3px #00FF00);
+}
+
+.user-via.segment-selected {
+    fill: #00FF00 !important;
+    filter: drop-shadow(0 0 3px #00FF00);
 }
 
 /* Routing active - highlight same-net elements during routing */
