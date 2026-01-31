@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 
-from .config import DEFAULT_PCB_FILE, DEFAULT_PORT, FRONTEND_DIR
+from .config import DEFAULT_PCB_FILE, DEFAULT_PORT, FRONTEND_DIR, PROJECT_ROOT
 from .pcb import PCBParser
 from .svg import SVGGenerator
 from .routing import TraceRouter
@@ -74,7 +74,13 @@ pcb_parser = PCBParser(DEFAULT_PCB_FILE)
 svg_generator = SVGGenerator(pcb_parser)
 
 # Create router with cached obstacle maps at startup
-trace_router = TraceRouter(pcb_parser, clearance=0.2, cache_obstacles=True)
+# Traces are persisted to pending_traces.json in the project root
+trace_router = TraceRouter(
+    pcb_parser,
+    clearance=0.2,
+    cache_obstacles=True,
+    pending_traces_file=PROJECT_ROOT / "pending_traces.json"
+)
 
 # Pre-expand blocked cells for common trace widths to avoid slow first request
 # 0.125mm radius = 0.25mm trace width (most common)
