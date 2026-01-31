@@ -119,7 +119,7 @@ class SVGGenerator:
                 fill: #00FF00 !important;
                 fill-opacity: 0.9 !important;
             }
-            .trace { pointer-events: none; }
+            .trace { pointer-events: stroke; cursor: pointer; }
             .trace.highlighted {
                 stroke: #00FF00 !important;
                 stroke-opacity: 1 !important;
