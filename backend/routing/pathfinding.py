@@ -2,6 +2,9 @@
 import heapq
 import math
 
+import numpy as np
+from scipy import ndimage
+
 from .obstacles import ObstacleMap
 
 
@@ -40,42 +43,60 @@ TURN_PENALTIES = {
 HEURISTIC_WEIGHT = 1.5
 
 
-def _expand_blocked_cells(
-    blocked: set[tuple[int, int]],
+def _expand_cells_fast(
+    cells: set[tuple[int, int]],
     radius: float,
     resolution: float
 ) -> set[tuple[int, int]]:
     """
-    Expand blocked cells by a radius to account for trace width.
-
-    This ensures that when we check if a cell is passable, we're checking
-    if the entire trace (not just its center) would fit through.
+    Expand a set of cells by a radius using fast numpy-based dilation.
 
     Args:
-        blocked: Set of blocked grid cells
+        cells: Set of grid cells to expand
         radius: Expansion radius in world units (mm)
         resolution: Grid cell size (mm)
 
     Returns:
-        Expanded set of blocked cells
+        Expanded set of cells
     """
-    if not blocked or radius <= 0:
-        return blocked
+    if not cells or radius <= 0:
+        return cells
 
-    # Calculate expansion in grid cells
     grid_radius = int(math.ceil(radius / resolution))
     if grid_radius == 0:
-        return blocked
+        return cells
 
+    # Get bounds
+    min_gx = min(c[0] for c in cells)
+    max_gx = max(c[0] for c in cells)
+    min_gy = min(c[1] for c in cells)
+    max_gy = max(c[1] for c in cells)
+
+    # Add padding for expansion
+    pad = grid_radius + 1
+    width = max_gx - min_gx + 1 + 2 * pad
+    height = max_gy - min_gy + 1 + 2 * pad
+
+    # Create numpy array
+    cell_array = np.zeros((height, width), dtype=np.uint8)
+    for gx, gy in cells:
+        cell_array[gy - min_gy + pad, gx - min_gx + pad] = 1
+
+    # Create circular structuring element
+    y, x = np.ogrid[-grid_radius:grid_radius + 1,
+                    -grid_radius:grid_radius + 1]
+    structuring_element = (x * x + y * y <= grid_radius * grid_radius).astype(np.uint8)
+
+    # Dilate
+    dilated = ndimage.binary_dilation(cell_array, structure=structuring_element)
+
+    # Convert back to set
     expanded: set[tuple[int, int]] = set()
-
-    for gx, gy in blocked:
-        # Add all cells within grid_radius
-        for dx in range(-grid_radius, grid_radius + 1):
-            for dy in range(-grid_radius, grid_radius + 1):
-                # Use circular expansion for accuracy
-                if dx * dx + dy * dy <= grid_radius * grid_radius:
-                    expanded.add((gx + dx, gy + dy))
+    gy_indices, gx_indices = np.where(dilated)
+    for gy_idx, gx_idx in zip(gy_indices, gx_indices):
+        gx = gx_idx + min_gx - pad
+        gy = gy_idx + min_gy - pad
+        expanded.add((gx, gy))
 
     return expanded
 
@@ -126,8 +147,8 @@ def astar_search(
     # Also expand allowed cells to match, so same-net routing works correctly
     if trace_radius > 0:
         blocked = obstacle_map.get_expanded_blocked(trace_radius)
-        extra = _expand_blocked_cells(extra, trace_radius, resolution) if extra else set()
-        allowed = _expand_blocked_cells(allowed, trace_radius, resolution) if allowed else set()
+        extra = _expand_cells_fast(extra, trace_radius, resolution) if extra else set()
+        allowed = _expand_cells_fast(allowed, trace_radius, resolution) if allowed else set()
     else:
         blocked = obstacle_map._blocked
 
