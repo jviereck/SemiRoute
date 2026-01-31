@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 
-from .config import DEFAULT_PCB_FILE, FRONTEND_DIR
+from .config import DEFAULT_PCB_FILE, DEFAULT_PORT, FRONTEND_DIR
 from .pcb import PCBParser
 from .svg import SVGGenerator
 from .routing import TraceRouter
@@ -299,4 +299,4 @@ app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=DEFAULT_PORT)
