@@ -1,0 +1,359 @@
+/* Reset and base styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Layout */
+.app-container {
+    display: flex;
+    height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 280px;
+    background: #252525;
+    padding: 20px;
+    overflow-y: auto;
+    border-right: 1px solid #333;
+}
+
+.sidebar h1 {
+    font-size: 1.5rem;
+    margin-bottom: 20px;
+    color: #fff;
+}
+
+/* Panels */
+.panel {
+    margin-bottom: 24px;
+}
+
+.panel h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #888;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #333;
+    padding-bottom: 8px;
+}
+
+/* Layer toggles */
+#layer-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.layer-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.layer-group-title {
+    font-size: 0.75rem;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+
+.layer-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.layer-toggle:hover {
+    background: #333;
+}
+
+.layer-toggle input {
+    cursor: pointer;
+}
+
+.layer-color {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+}
+
+/* Board info */
+#board-info {
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+#board-info p {
+    margin-bottom: 4px;
+}
+
+#board-info .value {
+    color: #4fc3f7;
+    font-family: monospace;
+}
+
+/* Selection info */
+#selection-info {
+    font-size: 0.9rem;
+}
+
+#selection-info .hint {
+    color: #666;
+    font-style: italic;
+}
+
+#selection-info .net-name {
+    color: #4fc3f7;
+    font-weight: bold;
+    font-size: 1.1rem;
+    margin-bottom: 8px;
+}
+
+#selection-info .pad-list {
+    font-size: 0.85rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+#selection-info .pad-item {
+    padding: 4px 0;
+    border-bottom: 1px solid #333;
+    font-family: monospace;
+}
+
+/* Controls list */
+.controls-list {
+    list-style: none;
+    font-size: 0.85rem;
+}
+
+.controls-list li {
+    padding: 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.controls-list kbd {
+    background: #333;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.8rem;
+    min-width: 50px;
+    text-align: center;
+}
+
+/* Main viewer */
+.viewer {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #1a1a1a;
+}
+
+#svg-container {
+    width: 100%;
+    height: 100%;
+    cursor: default;
+}
+
+#svg-container.panning {
+    cursor: grabbing;
+}
+
+#svg-container svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Trace mode styles */
+#trace-mode-panel button {
+    width: 100%;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+}
+
+#trace-mode-toggle {
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+#trace-mode-toggle:hover {
+    background: #4a4a4a;
+}
+
+#trace-mode-toggle.active {
+    background: #2e7d32;
+    color: #fff;
+}
+
+#trace-options {
+    margin-top: 12px;
+}
+
+#trace-options.hidden {
+    display: none;
+}
+
+#trace-options label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
+}
+
+#trace-options select,
+#trace-options input {
+    flex: 1;
+    padding: 4px 8px;
+    background: #333;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 0.85rem;
+}
+
+#trace-status {
+    padding: 8px;
+    background: #333;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: #888;
+    text-align: center;
+    margin-top: 8px;
+}
+
+#trace-status.routing {
+    color: #ffc107;
+}
+
+#trace-status.success {
+    color: #4caf50;
+}
+
+#trace-status.error {
+    color: #f44336;
+}
+
+#trace-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+#trace-actions.hidden {
+    display: none;
+}
+
+#trace-confirm {
+    background: #2e7d32;
+    color: #fff;
+}
+
+#trace-confirm:hover {
+    background: #388e3c;
+}
+
+#trace-cancel {
+    background: #c62828;
+    color: #fff;
+}
+
+#trace-cancel:hover {
+    background: #d32f2f;
+}
+
+/* Trace mode cursor */
+body.trace-mode-active #svg-container {
+    cursor: crosshair;
+}
+
+/* Start marker */
+.start-marker {
+    pointer-events: none;
+}
+
+/* Pending trace style */
+.pending-trace {
+    pointer-events: none;
+}
+
+/* Trace error message */
+#trace-error {
+    padding: 8px;
+    background: #4a1010;
+    border: 1px solid #c62828;
+    border-radius: 4px;
+    color: #ff8a80;
+    font-size: 0.85rem;
+    margin-top: 8px;
+}
+
+#trace-error.hidden {
+    display: none;
+}
+
+/* User via styles */
+.user-via {
+    pointer-events: none;
+}
+
+.user-via.pending-element {
+    opacity: 0.7;
+}
+
+/* Routing active - highlight same-net elements during routing */
+.pad.routing-active,
+.via.routing-active {
+    stroke: #fff !important;
+    stroke-width: 0.15 !important;
+    filter: brightness(1.5) drop-shadow(0 0 2px currentColor);
+}
+
+.trace.routing-active {
+    stroke-opacity: 1 !important;
+    stroke-width: 0.4 !important;
+    filter: brightness(1.5) drop-shadow(0 0 2px currentColor);
+}

@@ -1,0 +1,25 @@
+{
+  "name": "semirouter",
+  "version": "1.0.0",
+  "description": "PCB Viewer with trace and via visualization",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "node tests/test_click_detection.js && node tests/test_traces_vias.js",
+    "test:click": "node tests/test_click_detection.js",
+    "test:traces": "node tests/test_traces_vias.js",
+    "test:c5": "node tests/test_c5_pads.js",
+    "test:trace-mode": "node tests/test_trace_mode.js",
+    "test:routing": "node tests/test_trace_routing.js",
+    "test:multilayer": "node tests/test_multilayer_routing.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "puppeteer": "^24.36.1"
+  }
+}

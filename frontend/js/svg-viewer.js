@@ -1,0 +1,498 @@
+/**
+ * SVG Viewer with pan and zoom functionality.
+ */
+class SVGViewer {
+    constructor(container) {
+        this.container = container;
+        this.svg = null;
+
+        // ViewBox state (in SVG coordinates)
+        this.viewBox = { x: 0, y: 0, width: 100, height: 100 };
+
+        // Interaction state
+        this.isPanning = false;
+        this.lastMouseX = 0;
+        this.lastMouseY = 0;
+
+        // Zoom limits
+        this.minScale = 0.1;
+        this.maxScale = 50;
+
+        // Bind event handlers
+        this._onMouseDown = this._onMouseDown.bind(this);
+        this._onMouseMove = this._onMouseMove.bind(this);
+        this._onMouseUp = this._onMouseUp.bind(this);
+        this._onWheel = this._onWheel.bind(this);
+        this._onKeyDown = this._onKeyDown.bind(this);
+    }
+
+    /**
+     * Load SVG content into the container.
+     */
+    loadSVG(svgContent) {
+        this.container.innerHTML = svgContent;
+        this.svg = this.container.querySelector('svg');
+
+        if (!this.svg) {
+            console.error('No SVG element found');
+            return;
+        }
+
+        // Store original viewBox
+        const viewBox = this.svg.getAttribute('viewBox').split(' ').map(Number);
+        this.originalViewBox = {
+            x: viewBox[0],
+            y: viewBox[1],
+            width: viewBox[2],
+            height: viewBox[3]
+        };
+
+        // Initialize current viewBox to original
+        this.viewBox = { ...this.originalViewBox };
+
+        // Setup event listeners
+        this._setupEventListeners();
+
+        // Initial fit
+        this.fitToView();
+    }
+
+    /**
+     * Setup event listeners for interaction.
+     */
+    _setupEventListeners() {
+        this.container.addEventListener('mousedown', this._onMouseDown);
+        this.container.addEventListener('mousemove', this._onMouseMove);
+        this.container.addEventListener('mouseup', this._onMouseUp);
+        this.container.addEventListener('mouseleave', this._onMouseUp);
+        this.container.addEventListener('wheel', this._onWheel, { passive: false });
+        document.addEventListener('keydown', this._onKeyDown);
+    }
+
+    /**
+     * Convert screen coordinates to SVG coordinates.
+     */
+    _screenToSVG(screenX, screenY) {
+        const rect = this.container.getBoundingClientRect();
+        const ratioX = this.viewBox.width / rect.width;
+        const ratioY = this.viewBox.height / rect.height;
+        return {
+            x: this.viewBox.x + (screenX - rect.left) * ratioX,
+            y: this.viewBox.y + (screenY - rect.top) * ratioY
+        };
+    }
+
+    /**
+     * Handle mouse down for panning.
+     */
+    _onMouseDown(e) {
+        // Only pan with left mouse button + shift key
+        if (e.button !== 0) return;
+        if (!e.shiftKey) return;  // Require shift for panning
+
+        this.isPanning = true;
+        this.lastMouseX = e.clientX;
+        this.lastMouseY = e.clientY;
+        this.container.classList.add('panning');
+    }
+
+    /**
+     * Handle mouse move for panning.
+     */
+    _onMouseMove(e) {
+        if (!this.isPanning) return;
+
+        const rect = this.container.getBoundingClientRect();
+        const dx = (e.clientX - this.lastMouseX) * (this.viewBox.width / rect.width);
+        const dy = (e.clientY - this.lastMouseY) * (this.viewBox.height / rect.height);
+
+        this.viewBox.x -= dx;
+        this.viewBox.y -= dy;
+
+        this.lastMouseX = e.clientX;
+        this.lastMouseY = e.clientY;
+
+        this._updateTransform();
+    }
+
+    /**
+     * Handle mouse up to end panning.
+     */
+    _onMouseUp() {
+        this.isPanning = false;
+        this.container.classList.remove('panning');
+    }
+
+    /**
+     * Handle mouse wheel for zooming.
+     */
+    _onWheel(e) {
+        e.preventDefault();
+
+        // Get mouse position in SVG coordinates BEFORE zoom
+        const svgPoint = this._screenToSVG(e.clientX, e.clientY);
+
+        // Calculate zoom factor
+        const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
+
+        // Calculate new dimensions
+        const newWidth = this.viewBox.width * zoomFactor;
+        const newHeight = this.viewBox.height * zoomFactor;
+
+        // Check zoom limits based on original viewBox
+        const currentScale = this.originalViewBox.width / this.viewBox.width;
+        const newScale = this.originalViewBox.width / newWidth;
+        if (newScale < this.minScale || newScale > this.maxScale) {
+            return;
+        }
+
+        // Adjust viewBox origin to keep mouse position fixed
+        // The mouse point should stay at the same screen position after zoom
+        const rect = this.container.getBoundingClientRect();
+        const mouseRatioX = (e.clientX - rect.left) / rect.width;
+        const mouseRatioY = (e.clientY - rect.top) / rect.height;
+
+        this.viewBox.x = svgPoint.x - newWidth * mouseRatioX;
+        this.viewBox.y = svgPoint.y - newHeight * mouseRatioY;
+        this.viewBox.width = newWidth;
+        this.viewBox.height = newHeight;
+
+        this._updateTransform();
+    }
+
+    /**
+     * Handle keyboard shortcuts.
+     */
+    _onKeyDown(e) {
+        if (e.key === 'r' || e.key === 'R') {
+            this.fitToView();
+        }
+    }
+
+    /**
+     * Update the SVG transform.
+     */
+    _updateTransform() {
+        if (!this.svg) return;
+        this.svg.setAttribute('viewBox',
+            `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
+    }
+
+    /**
+     * Fit the entire board in view.
+     */
+    fitToView() {
+        if (!this.svg) return;
+
+        const containerRect = this.container.getBoundingClientRect();
+        const vb = this.originalViewBox;
+
+        // Calculate scale to fit with 90% margin
+        const scaleX = containerRect.width / vb.width;
+        const scaleY = containerRect.height / vb.height;
+        const scale = Math.min(scaleX, scaleY) * 0.9;
+
+        // Calculate viewBox dimensions that fit the container
+        const viewWidth = containerRect.width / scale;
+        const viewHeight = containerRect.height / scale;
+
+        // Center the original viewBox in the new viewBox
+        this.viewBox = {
+            x: vb.x + (vb.width - viewWidth) / 2,
+            y: vb.y + (vb.height - viewHeight) / 2,
+            width: viewWidth,
+            height: viewHeight
+        };
+
+        this._updateTransform();
+    }
+
+    /**
+     * Toggle visibility of a layer.
+     */
+    toggleLayer(layerName, visible) {
+        if (!this.svg) return;
+
+        const layerId = `layer-${layerName.replace('.', '-')}`;
+        const layer = this.svg.getElementById(layerId);
+
+        if (layer) {
+            layer.classList.toggle('hidden', !visible);
+        }
+    }
+
+    /**
+     * Highlight pads, traces, and vias by net ID.
+     */
+    highlightNet(netId) {
+        if (!this.svg) return;
+
+        // Clear existing highlights
+        this.svg.querySelectorAll('.pad.highlighted, .trace.highlighted, .via.highlighted').forEach(el => {
+            el.classList.remove('highlighted');
+        });
+
+        // Highlight new selection
+        if (netId !== null) {
+            this.svg.querySelectorAll(`.pad[data-net="${netId}"]`).forEach(el => {
+                el.classList.add('highlighted');
+            });
+            this.svg.querySelectorAll(`.trace[data-net="${netId}"]`).forEach(el => {
+                el.classList.add('highlighted');
+            });
+            this.svg.querySelectorAll(`.via[data-net="${netId}"]`).forEach(el => {
+                el.classList.add('highlighted');
+            });
+        }
+    }
+
+    /**
+     * Highlight all elements of a net during routing (bolder/more visible).
+     */
+    highlightRoutingNet(netId) {
+        if (!this.svg) return;
+
+        // Clear any existing routing highlight
+        this.clearRoutingHighlight();
+
+        if (netId === null || netId === 0) return;
+
+        // Add routing-active class to all elements of this net
+        this.svg.querySelectorAll(`.pad[data-net="${netId}"]`).forEach(el => {
+            el.classList.add('routing-active');
+        });
+        this.svg.querySelectorAll(`.trace[data-net="${netId}"]`).forEach(el => {
+            el.classList.add('routing-active');
+        });
+        this.svg.querySelectorAll(`.via[data-net="${netId}"]`).forEach(el => {
+            el.classList.add('routing-active');
+        });
+    }
+
+    /**
+     * Clear routing net highlight.
+     */
+    clearRoutingHighlight() {
+        if (!this.svg) return;
+
+        this.svg.querySelectorAll('.routing-active').forEach(el => {
+            el.classList.remove('routing-active');
+        });
+    }
+
+    /**
+     * Get pads by net ID.
+     */
+    getPadsByNet(netId) {
+        if (!this.svg) return [];
+
+        return Array.from(this.svg.querySelectorAll(`.pad[data-net="${netId}"]`)).map(el => ({
+            id: el.id,
+            footprint: el.dataset.footprint,
+            pad: el.dataset.pad,
+            netName: el.dataset.netName
+        }));
+    }
+
+    /**
+     * Convert screen coordinates to SVG coordinates (public version).
+     */
+    screenToSVG(screenX, screenY) {
+        return this._screenToSVG(screenX, screenY);
+    }
+
+    /**
+     * Show a small "x" marker at the trace start point.
+     */
+    showStartMarker(x, y) {
+        if (!this.svg) return;
+
+        this.clearPendingElements();
+
+        // Create a small "x" using two lines
+        const size = 0.4;  // Half-size of the x
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'start-marker pending-element');
+
+        const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line1.setAttribute('x1', x - size);
+        line1.setAttribute('y1', y - size);
+        line1.setAttribute('x2', x + size);
+        line1.setAttribute('y2', y + size);
+        line1.setAttribute('stroke', '#4caf50');
+        line1.setAttribute('stroke-width', '0.15');
+        line1.setAttribute('stroke-linecap', 'round');
+
+        const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line2.setAttribute('x1', x - size);
+        line2.setAttribute('y1', y + size);
+        line2.setAttribute('x2', x + size);
+        line2.setAttribute('y2', y - size);
+        line2.setAttribute('stroke', '#4caf50');
+        line2.setAttribute('stroke-width', '0.15');
+        line2.setAttribute('stroke-linecap', 'round');
+
+        group.appendChild(line1);
+        group.appendChild(line2);
+        this.svg.appendChild(group);
+    }
+
+    /**
+     * Render a pending trace path.
+     */
+    renderPendingTrace(path, layer, width) {
+        if (!this.svg || path.length < 2) return;
+
+        // Remove existing pending trace but keep start marker
+        this.svg.querySelectorAll('.pending-trace').forEach(el => el.remove());
+
+        // Layer colors
+        const layerColors = {
+            'F.Cu': '#C83232',
+            'B.Cu': '#3232C8',
+            'In1.Cu': '#C8C832',
+            'In2.Cu': '#32C8C8'
+        };
+        const color = layerColors[layer] || '#888888';
+
+        // Create path element
+        const pathData = path.map((p, i) =>
+            (i === 0 ? 'M' : 'L') + p[0].toFixed(4) + ',' + p[1].toFixed(4)
+        ).join(' ');
+
+        const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        pathEl.setAttribute('d', pathData);
+        pathEl.setAttribute('stroke', color);
+        pathEl.setAttribute('stroke-width', width);
+        pathEl.setAttribute('stroke-linecap', 'round');
+        pathEl.setAttribute('stroke-linejoin', 'round');
+        pathEl.setAttribute('fill', 'none');
+        pathEl.setAttribute('stroke-opacity', '0.5');  // Faint/transparent
+        pathEl.setAttribute('class', 'pending-trace pending-element');
+        this.svg.appendChild(pathEl);
+    }
+
+    /**
+     * Clear all pending elements (markers, preview traces).
+     */
+    clearPendingElements() {
+        if (!this.svg) return;
+        this.svg.querySelectorAll('.pending-element').forEach(el => el.remove());
+    }
+
+    /**
+     * Clear only the pending trace preview (keeps start marker).
+     */
+    clearPendingTrace() {
+        if (!this.svg) return;
+        this.svg.querySelectorAll('.pending-trace').forEach(el => el.remove());
+    }
+
+    /**
+     * Remove traces and vias added in a session (for undo).
+     */
+    removeSessionTraces(segments, vias) {
+        if (!this.svg) return;
+
+        const userGroup = this.svg.getElementById('user-traces');
+        if (!userGroup) return;
+
+        // Remove the last N user-trace elements matching the session count
+        const traceEls = userGroup.querySelectorAll('.user-trace');
+        const viaEls = userGroup.querySelectorAll('.user-via');
+        const holeEls = userGroup.querySelectorAll('.user-via-hole');
+
+        // Remove traces (from the end)
+        for (let i = 0; i < segments.length && traceEls.length > 0; i++) {
+            const el = traceEls[traceEls.length - 1 - i];
+            if (el) el.remove();
+        }
+
+        // Remove vias and holes (from the end)
+        for (let i = 0; i < vias.length; i++) {
+            const via = viaEls[viaEls.length - 1 - i];
+            const hole = holeEls[holeEls.length - 1 - i];
+            if (via) via.remove();
+            if (hole) hole.remove();
+        }
+    }
+
+    /**
+     * Render a user-placed via at the given coordinates.
+     */
+    renderUserVia(x, y, size, isPending = true) {
+        if (!this.svg) return;
+
+        // Find or create user traces group
+        let userGroup = this.svg.getElementById('user-traces');
+        if (!userGroup) {
+            userGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            userGroup.setAttribute('id', 'user-traces');
+            userGroup.setAttribute('class', 'user-trace-layer');
+            this.svg.appendChild(userGroup);
+        }
+
+        // Create via outer circle
+        const via = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        via.setAttribute('cx', x);
+        via.setAttribute('cy', y);
+        via.setAttribute('r', size / 2);
+        via.setAttribute('fill', '#C8A832');
+        via.setAttribute('class', isPending ? 'user-via pending-element' : 'user-via');
+        userGroup.appendChild(via);
+
+        // Create drill hole
+        const hole = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        hole.setAttribute('cx', x);
+        hole.setAttribute('cy', y);
+        hole.setAttribute('r', size / 4);  // Drill is typically half the via size
+        hole.setAttribute('fill', '#1a1a1a');
+        hole.setAttribute('class', isPending ? 'user-via-hole pending-element' : 'user-via-hole');
+        userGroup.appendChild(hole);
+    }
+
+    /**
+     * Confirm pending trace and make it permanent.
+     */
+    confirmPendingTrace(path, layer, width) {
+        if (!this.svg || path.length < 2) return;
+
+        // Layer colors
+        const layerColors = {
+            'F.Cu': '#C83232',
+            'B.Cu': '#3232C8',
+            'In1.Cu': '#C8C832',
+            'In2.Cu': '#32C8C8'
+        };
+        const color = layerColors[layer] || '#888888';
+
+        // Find or create user traces group
+        let userGroup = this.svg.getElementById('user-traces');
+        if (!userGroup) {
+            userGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            userGroup.setAttribute('id', 'user-traces');
+            userGroup.setAttribute('class', 'user-trace-layer');
+            this.svg.appendChild(userGroup);
+        }
+
+        // Create permanent path
+        const pathData = path.map((p, i) =>
+            (i === 0 ? 'M' : 'L') + p[0].toFixed(4) + ',' + p[1].toFixed(4)
+        ).join(' ');
+
+        const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        pathEl.setAttribute('d', pathData);
+        pathEl.setAttribute('stroke', color);
+        pathEl.setAttribute('stroke-width', width);
+        pathEl.setAttribute('stroke-linecap', 'round');
+        pathEl.setAttribute('stroke-linejoin', 'round');
+        pathEl.setAttribute('fill', 'none');
+        pathEl.setAttribute('stroke-opacity', '0.9');
+        pathEl.setAttribute('class', 'user-trace');
+        pathEl.setAttribute('data-layer', layer);
+        userGroup.appendChild(pathEl);
+
+        // Clear only the pending trace preview (not the start marker)
+        this.clearPendingTrace();
+    }
+}

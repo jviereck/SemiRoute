@@ -1,0 +1,207 @@
+"""A* pathfinding for PCB routing with 8-direction movement."""
+import heapq
+import math
+
+from .obstacles import ObstacleMap
+
+
+# 8 directions: N, NE, E, SE, S, SW, W, NW (0°, 45°, 90°, etc.)
+DIRECTIONS = (
+    (0, -1),   # N (0°)
+    (1, -1),   # NE (45°)
+    (1, 0),    # E (90°)
+    (1, 1),    # SE (135°)
+    (0, 1),    # S (180°)
+    (-1, 1),   # SW (225°)
+    (-1, 0),   # W (270°)
+    (-1, -1),  # NW (315°)
+)
+
+# Costs: orthogonal = 1.0, diagonal = sqrt(2)
+SQRT2 = math.sqrt(2)
+DIRECTION_COSTS = (1.0, SQRT2, 1.0, SQRT2, 1.0, SQRT2, 1.0, SQRT2)
+
+# Penalty for changing direction (encourages straighter traces)
+DIRECTION_CHANGE_PENALTY = 0.05
+
+# Heuristic weight for weighted A* (>1 = faster but less optimal)
+HEURISTIC_WEIGHT = 1.5
+
+
+def heuristic(x1: int, y1: int, x2: int, y2: int) -> float:
+    """Octile distance heuristic (optimal for 8-direction movement)."""
+    dx = abs(x2 - x1)
+    dy = abs(y2 - y1)
+    return max(dx, dy) + (SQRT2 - 1) * min(dx, dy)
+
+
+def astar_search(
+    obstacle_map: ObstacleMap,
+    start_x: float, start_y: float,
+    end_x: float, end_y: float,
+    trace_radius: float = 0,
+    allowed_cells: set[tuple[int, int]] | None = None
+) -> list[tuple[float, float]]:
+    """
+    Find shortest path using weighted A* algorithm with 8-direction movement.
+
+    Optimizations:
+    - Uses tuples instead of objects for nodes
+    - Direct access to blocked set
+    - Bounded search area
+    - Weighted heuristic for faster convergence
+
+    Args:
+        obstacle_map: Map of blocked areas
+        start_x, start_y: Start position (world coordinates)
+        end_x, end_y: End position (world coordinates)
+        trace_radius: Half of trace width for collision checking
+        allowed_cells: Optional set of cells that are allowed even if blocked
+                      (used for same-net routing)
+
+    Returns:
+        List of (x, y) waypoints in world coordinates, or empty list if no path
+    """
+    resolution = obstacle_map.resolution
+    blocked = obstacle_map._blocked  # Direct access for speed
+    allowed = allowed_cells or set()
+
+    # Convert to grid coordinates
+    start_gx = int(round(start_x / resolution))
+    start_gy = int(round(start_y / resolution))
+    end_gx = int(round(end_x / resolution))
+    end_gy = int(round(end_y / resolution))
+
+    # Get board bounds
+    min_gx, min_gy, max_gx, max_gy = obstacle_map.get_bounds()
+
+    # A* data structures
+    # open_set entries: (f_score, g_score, x, y, direction)
+    open_set: list[tuple[float, float, int, int, int]] = []
+    closed_set: set[tuple[int, int]] = set()
+    g_scores: dict[tuple[int, int], float] = {}
+    came_from: dict[tuple[int, int], tuple[int, int]] = {}
+
+    # Initialize
+    start_h = heuristic(start_gx, start_gy, end_gx, end_gy)
+    heapq.heappush(open_set, (start_h * HEURISTIC_WEIGHT, 0.0, start_gx, start_gy, -1))
+    g_scores[(start_gx, start_gy)] = 0.0
+
+    # Search
+    iterations = 0
+    max_iterations = 100000
+
+    while open_set and iterations < max_iterations:
+        iterations += 1
+
+        _, g, cx, cy, c_dir = heapq.heappop(open_set)
+        pos = (cx, cy)
+
+        # Goal check
+        if cx == end_gx and cy == end_gy:
+            return _reconstruct_path(came_from, pos, (start_gx, start_gy), resolution)
+
+        # Skip if already processed
+        if pos in closed_set:
+            continue
+        closed_set.add(pos)
+
+        # Expand neighbors
+        for dir_idx in range(8):
+            dx, dy = DIRECTIONS[dir_idx]
+            nx, ny = cx + dx, cy + dy
+
+            # Bounds check
+            if not (min_gx <= nx <= max_gx and min_gy <= ny <= max_gy):
+                continue
+
+            npos = (nx, ny)
+
+            # Skip if already processed
+            if npos in closed_set:
+                continue
+
+            # Check if blocked (unless it's the goal or in allowed set)
+            is_goal = (nx == end_gx and ny == end_gy)
+            if not is_goal and npos in blocked and npos not in allowed:
+                continue
+
+            # For diagonal moves, check corners to prevent cutting through
+            if dx != 0 and dy != 0:
+                c1 = (cx + dx, cy)
+                c2 = (cx, cy + dy)
+                if (c1 in blocked and c1 not in allowed) or (c2 in blocked and c2 not in allowed):
+                    continue
+
+            # Calculate cost
+            move_cost = DIRECTION_COSTS[dir_idx]
+            if c_dir >= 0 and c_dir != dir_idx:
+                move_cost += DIRECTION_CHANGE_PENALTY
+
+            new_g = g + move_cost
+
+            # Check if this is a better path
+            old_g = g_scores.get(npos)
+            if old_g is not None and old_g <= new_g:
+                continue
+
+            g_scores[npos] = new_g
+            came_from[npos] = pos
+
+            h = heuristic(nx, ny, end_gx, end_gy)
+            new_f = new_g + h * HEURISTIC_WEIGHT
+            heapq.heappush(open_set, (new_f, new_g, nx, ny, dir_idx))
+
+    # No path found
+    return []
+
+
+def _reconstruct_path(
+    came_from: dict[tuple[int, int], tuple[int, int]],
+    end: tuple[int, int],
+    start: tuple[int, int],
+    resolution: float
+) -> list[tuple[float, float]]:
+    """Reconstruct and simplify path from A* result."""
+    # Build raw path
+    raw_path: list[tuple[int, int]] = []
+    pos = end
+    while pos != start:
+        raw_path.append(pos)
+        pos = came_from[pos]
+    raw_path.append(start)
+    raw_path.reverse()
+
+    # Simplify: remove collinear points
+    if len(raw_path) < 3:
+        return [(x * resolution, y * resolution) for x, y in raw_path]
+
+    simplified: list[tuple[int, int]] = [raw_path[0]]
+
+    for i in range(1, len(raw_path) - 1):
+        prev = simplified[-1]
+        curr = raw_path[i]
+        next_pt = raw_path[i + 1]
+
+        # Check if direction changes
+        dx1, dy1 = curr[0] - prev[0], curr[1] - prev[1]
+        dx2, dy2 = next_pt[0] - curr[0], next_pt[1] - curr[1]
+
+        # Normalize to unit direction
+        if dx1 != 0:
+            dx1 = dx1 // abs(dx1)
+        if dy1 != 0:
+            dy1 = dy1 // abs(dy1)
+        if dx2 != 0:
+            dx2 = dx2 // abs(dx2)
+        if dy2 != 0:
+            dy2 = dy2 // abs(dy2)
+
+        # If direction changes, keep this point
+        if dx1 != dx2 or dy1 != dy2:
+            simplified.append(curr)
+
+    simplified.append(raw_path[-1])
+
+    # Convert to world coordinates
+    return [(x * resolution, y * resolution) for x, y in simplified]
