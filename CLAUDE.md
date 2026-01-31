@@ -10,11 +10,9 @@ SemiRouter is a PCB viewer and interactive trace router for KiCad PCB files. It 
 
 ### Run the server
 ```bash
-uvicorn backend.main:app --reload
+./start.sh
 ```
-The server serves both the API and frontend.
-
-**Important:** Do not start uvicorn with a fixed port (e.g., `--port 8000`). The port is determined by the git branch name.
+The server serves both the API and frontend. The port is determined by the git branch name (main=8000, *-a=8001, *-b=8002, etc.).
 
 ### Run tests
 ```bash
