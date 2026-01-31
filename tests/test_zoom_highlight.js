@@ -2,12 +2,13 @@
  * Test zoom centering and highlight sizing.
  */
 const puppeteer = require('puppeteer');
+const { SERVER_URL } = require('./config');
 
 (async () => {
     const browser = await puppeteer.launch({ headless: false, args: ['--window-size=1400,900'] });
     const page = await browser.newPage();
     await page.setViewport({ width: 1400, height: 900 });
-    await page.goto('http://localhost:8000', { waitUntil: 'networkidle0' });
+    await page.goto(SERVER_URL, { waitUntil: 'networkidle0' });
     await page.waitForSelector('svg .pad');
 
     console.log('=== Testing Zoom and Highlight ===\n');

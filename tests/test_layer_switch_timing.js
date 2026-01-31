@@ -2,8 +2,7 @@
  * Test to investigate layer switching delay.
  */
 const puppeteer = require('puppeteer');
-
-const SERVER_URL = 'http://localhost:8000';
+const { SERVER_URL } = require('./config');
 
 async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
