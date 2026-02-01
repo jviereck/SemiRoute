@@ -92,6 +92,10 @@ class SVGGenerator:
                 self._add_layer_traces(group, layer)
                 self._add_layer_pads(group, layer)
 
+            # Add labels for the Labels layer
+            if layer == "Labels":
+                self._add_labels(group)
+
         # Add vias on top of traces
         via_group = SubElement(svg, "g", {
             "id": "vias",
@@ -157,6 +161,9 @@ class SVGGenerator:
             .clearance-layer { pointer-events: none; }
             .clearance { fill: none; stroke: #FF6600; stroke-opacity: 0.5; }
             .clearance-fill { fill: #FF6600; fill-opacity: 0.15; stroke: none; }
+            .label-text { font-family: monospace; pointer-events: none; }
+            .component-label { font-size: 0.6px; fill: #FFFF00; font-weight: bold; }
+            .pad-label { font-size: 0.35px; fill: #FFFFFF; }
         """
 
     def _add_layer_graphics(self, group: Element, layer: str) -> None:
@@ -325,3 +332,30 @@ class SVGGenerator:
                 })
 
         group.append(elem)
+
+    def _add_labels(self, group: Element) -> None:
+        """Add component reference and pad labels."""
+        # Add component reference labels
+        for fp in self.parser.footprints:
+            if fp.reference:
+                elem = Element("text", {
+                    "x": f"{fp.x:.4f}",
+                    "y": f"{fp.y:.4f}",
+                    "class": "label-text component-label",
+                    "text-anchor": "middle",
+                    "dominant-baseline": "middle",
+                })
+                elem.text = fp.reference
+                group.append(elem)
+
+        # Add pad labels
+        for pad in self.parser.pads:
+            elem = Element("text", {
+                "x": f"{pad.x:.4f}",
+                "y": f"{pad.y:.4f}",
+                "class": "label-text pad-label",
+                "text-anchor": "middle",
+                "dominant-baseline": "middle",
+            })
+            elem.text = pad.name
+            group.append(elem)

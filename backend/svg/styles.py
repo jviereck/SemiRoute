@@ -22,6 +22,9 @@ LAYER_COLORS = {
     # Courtyard
     "F.CrtYd": "#FF26E2",   # Magenta - front courtyard
     "B.CrtYd": "#FF26E2",   # Magenta - back courtyard
+
+    # Labels
+    "Labels": "#FFFF00",    # Yellow - component and pad labels
 }
 
 # Background color for the board
@@ -36,6 +39,7 @@ LAYER_ORDER = [
     "Edge.Cuts",
     "B.Cu", "In2.Cu", "In1.Cu", "F.Cu",
     "F.SilkS", "F.Fab", "F.CrtYd",
+    "Labels",
 ]
 
 # Default opacities
