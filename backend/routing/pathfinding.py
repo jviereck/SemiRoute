@@ -5,7 +5,9 @@ import math
 import numpy as np
 from scipy import ndimage
 
-from .obstacles import ObstacleMap
+from typing import Optional
+from .obstacles import ObstacleMap, ElementAwareMap
+from .geometry import GeometryChecker
 
 
 # 8 directions: N, NE, E, SE, S, SW, W, NW (0°, 45°, 90°, etc.)
@@ -299,3 +301,181 @@ def _reconstruct_path(
 
     # Convert to world coordinates
     return [(x * resolution, y * resolution) for x, y in simplified]
+
+
+def astar_search_element_aware(
+    obstacle_map: ElementAwareMap,
+    start_x: float, start_y: float,
+    end_x: float, end_y: float,
+    trace_radius: float = 0,
+    net_id: Optional[int] = None,
+    pending_traces: Optional[list] = None
+) -> list[tuple[float, float]]:
+    """
+    A* pathfinding using element-aware obstacle checking.
+
+    Key differences from astar_search:
+    - No allowed_cells/extra_blocked complexity
+    - Checks actual geometry at each cell
+    - Net filtering is done during is_blocked check
+
+    Args:
+        obstacle_map: ElementAwareMap with spatial index
+        start_x, start_y: Start position (world coordinates)
+        end_x, end_y: End position (world coordinates)
+        trace_radius: Half of trace width for collision checking
+        net_id: Net ID for same-net routing (passed to is_blocked)
+        pending_traces: Optional list of pending traces to also avoid
+
+    Returns:
+        List of (x, y) waypoints, or empty list if no path found
+    """
+    resolution = obstacle_map.resolution
+
+    # Convert to grid coordinates
+    start_gx = int(round(start_x / resolution))
+    start_gy = int(round(start_y / resolution))
+    end_gx = int(round(end_x / resolution))
+    end_gy = int(round(end_y / resolution))
+
+    # Get board bounds
+    min_gx, min_gy, max_gx, max_gy = obstacle_map.get_bounds()
+
+    # A* data structures
+    open_set: list[tuple[float, float, int, int, int]] = []
+    closed_set: set[tuple[int, int]] = set()
+    g_scores: dict[tuple[int, int], float] = {}
+    came_from: dict[tuple[int, int], tuple[int, int]] = {}
+
+    # Initialize
+    start_h = heuristic(start_gx, start_gy, end_gx, end_gy)
+    heapq.heappush(open_set, (start_h * HEURISTIC_WEIGHT, 0.0, start_gx, start_gy, -1))
+    g_scores[(start_gx, start_gy)] = 0.0
+
+    iterations = 0
+    max_iterations = 100000
+
+    while open_set and iterations < max_iterations:
+        iterations += 1
+
+        _, g, cx, cy, c_dir = heapq.heappop(open_set)
+        pos = (cx, cy)
+
+        if cx == end_gx and cy == end_gy:
+            return _reconstruct_path(came_from, pos, (start_gx, start_gy), resolution)
+
+        if pos in closed_set:
+            continue
+        closed_set.add(pos)
+
+        for dir_idx in range(8):
+            dx, dy = DIRECTIONS[dir_idx]
+            nx, ny = cx + dx, cy + dy
+
+            if not (min_gx <= nx <= max_gx and min_gy <= ny <= max_gy):
+                continue
+
+            npos = (nx, ny)
+            if npos in closed_set:
+                continue
+
+            # Convert to world coordinates for geometry check
+            world_x = nx * resolution
+            world_y = ny * resolution
+
+            # Check if blocked using element-aware method
+            is_goal = (nx == end_gx and ny == end_gy)
+            is_blocked = obstacle_map.is_blocked(world_x, world_y, trace_radius, net_id)
+
+            # Also check pending traces
+            if pending_traces and not is_blocked:
+                for pending in pending_traces:
+                    if _point_blocked_by_pending(
+                        world_x, world_y, trace_radius,
+                        pending, obstacle_map.clearance, net_id
+                    ):
+                        is_blocked = True
+                        break
+
+            if not is_goal and is_blocked:
+                continue
+
+            # Corner cutting check for diagonal moves
+            if dx != 0 and dy != 0:
+                c1_x, c1_y = cx + dx, cy
+                c2_x, c2_y = cx, cy + dy
+                c1_world_x, c1_world_y = c1_x * resolution, c1_y * resolution
+                c2_world_x, c2_world_y = c2_x * resolution, c2_y * resolution
+
+                c1_blocked = obstacle_map.is_blocked(c1_world_x, c1_world_y, trace_radius, net_id)
+                c2_blocked = obstacle_map.is_blocked(c2_world_x, c2_world_y, trace_radius, net_id)
+
+                # Also check pending for corners
+                if pending_traces:
+                    if not c1_blocked:
+                        for pending in pending_traces:
+                            if _point_blocked_by_pending(
+                                c1_world_x, c1_world_y, trace_radius,
+                                pending, obstacle_map.clearance, net_id
+                            ):
+                                c1_blocked = True
+                                break
+                    if not c2_blocked:
+                        for pending in pending_traces:
+                            if _point_blocked_by_pending(
+                                c2_world_x, c2_world_y, trace_radius,
+                                pending, obstacle_map.clearance, net_id
+                            ):
+                                c2_blocked = True
+                                break
+
+                if c1_blocked or c2_blocked:
+                    continue
+
+            # Calculate cost (same as before)
+            move_cost = DIRECTION_COSTS[dir_idx]
+            if c_dir >= 0 and c_dir != dir_idx:
+                dir_diff = abs(dir_idx - c_dir)
+                if dir_diff > 4:
+                    dir_diff = 8 - dir_diff
+                move_cost += TURN_PENALTIES.get(dir_diff, 0.5)
+
+            new_g = g + move_cost
+
+            old_g = g_scores.get(npos)
+            if old_g is not None and old_g <= new_g:
+                continue
+
+            g_scores[npos] = new_g
+            came_from[npos] = pos
+
+            h = heuristic(nx, ny, end_gx, end_gy)
+            new_f = new_g + h * HEURISTIC_WEIGHT
+            heapq.heappush(open_set, (new_f, new_g, nx, ny, dir_idx))
+
+    return []
+
+
+def _point_blocked_by_pending(
+    x: float, y: float, trace_radius: float,
+    pending, clearance: float,
+    net_id: Optional[int]
+) -> bool:
+    """Check if point is blocked by a pending trace."""
+    # Skip same-net pending traces
+    if net_id is not None and pending.net_id == net_id:
+        return False
+
+    required_clearance = clearance + trace_radius + pending.width / 2
+
+    segments = pending.segments
+    for i in range(len(segments) - 1):
+        dist = GeometryChecker._point_to_segment(
+            x, y,
+            segments[i][0], segments[i][1],
+            segments[i + 1][0], segments[i + 1][1]
+        )
+        if dist < required_clearance:
+            return True
+
+    return False

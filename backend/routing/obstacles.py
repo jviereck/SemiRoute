@@ -7,6 +7,8 @@ from typing import Optional
 
 from backend.pcb.parser import PCBParser
 from backend.pcb.models import PadInfo, TraceInfo, ViaInfo, GraphicLine, GraphicArc
+from backend.routing.geometry import GeometryChecker
+from backend.routing.spatial_index import SpatialIndex
 
 
 @dataclass
@@ -337,3 +339,134 @@ class ObstacleMap:
 
         self._expanded_cache[grid_radius] = expanded
         return expanded
+
+
+class ElementAwareMap:
+    """
+    Element-aware obstacle map using spatial index and exact geometry.
+
+    Unlike ObstacleMap which pre-computes blocked cells, this checks
+    actual element geometry at query time for accurate clearance checking.
+    """
+
+    def __init__(
+        self,
+        parser: PCBParser,
+        layer: str,
+        clearance: float = 0.2,
+        grid_resolution: float = 0.025
+    ):
+        """
+        Initialize element-aware obstacle map.
+
+        Args:
+            parser: Parsed PCB data
+            layer: Copper layer to route on
+            clearance: Minimum clearance to obstacles (mm)
+            grid_resolution: Grid cell size (mm)
+        """
+        self.parser = parser
+        self.layer = layer
+        self.clearance = clearance
+        self.resolution = grid_resolution
+
+        # Build spatial index
+        self._spatial_index = SpatialIndex(cell_size=1.0, clearance=clearance)
+        self._build_spatial_index()
+
+        # Cache board bounds
+        info = parser.get_board_info()
+        self._bounds = (info.min_x - 1, info.min_y - 1, info.max_x + 1, info.max_y + 1)
+
+    def _build_spatial_index(self) -> None:
+        """Populate spatial index with all PCB elements."""
+        # Add pads on this layer
+        for pad in self.parser.pads:
+            if self.layer in pad.layers:
+                self._spatial_index.add_pad(pad)
+
+        # Add traces on this layer
+        for trace in self.parser.get_traces_by_layer(self.layer):
+            self._spatial_index.add_trace(trace)
+
+        # Add vias (they span all layers)
+        for via in self.parser.vias:
+            self._spatial_index.add_via(via)
+
+    def _to_grid(self, x: float, y: float) -> tuple[int, int]:
+        """Convert world coordinates to grid coordinates."""
+        return (
+            int(round(x / self.resolution)),
+            int(round(y / self.resolution))
+        )
+
+    def _to_world(self, gx: int, gy: int) -> tuple[float, float]:
+        """Convert grid coordinates to world coordinates."""
+        return (gx * self.resolution, gy * self.resolution)
+
+    def is_blocked(
+        self,
+        x: float,
+        y: float,
+        trace_radius: float = 0,
+        net_id: Optional[int] = None
+    ) -> bool:
+        """
+        Check if a position is blocked using exact geometry.
+
+        Args:
+            x, y: World coordinates to check
+            trace_radius: Half of trace width (for clearance expansion)
+            net_id: Net ID to allow crossing (same-net routing)
+
+        Returns:
+            True if position would violate clearance to any different-net element
+        """
+        # Required clearance: design rule clearance + trace radius
+        # Add a small buffer for grid discretization (half a grid cell)
+        grid_buffer = 0.5 * self.resolution
+        required_clearance = self.clearance + trace_radius + grid_buffer
+
+        # Query spatial index for nearby elements
+        for element in self._spatial_index.query_nearby(
+            x, y, required_clearance, self.layer
+        ):
+            # Skip same-net elements
+            element_net_id = self._get_element_net_id(element)
+            if net_id is not None and element_net_id == net_id:
+                continue
+
+            # Get exact distance to element
+            distance = self._get_distance_to_element(x, y, element)
+
+            # Check clearance violation
+            if distance < required_clearance:
+                return True
+
+        return False
+
+    def _get_element_net_id(self, element) -> int:
+        """Get the net ID of an element."""
+        if isinstance(element, PadInfo):
+            return element.net_id
+        elif isinstance(element, TraceInfo):
+            return element.net_id
+        elif isinstance(element, ViaInfo):
+            return element.net_id
+        return 0
+
+    def _get_distance_to_element(self, x: float, y: float, element) -> float:
+        """Get exact distance from point to element edge."""
+        if isinstance(element, PadInfo):
+            return GeometryChecker.point_to_pad_distance(x, y, element)
+        elif isinstance(element, TraceInfo):
+            return GeometryChecker.point_to_trace_distance(x, y, element)
+        elif isinstance(element, ViaInfo):
+            return GeometryChecker.point_to_via_distance(x, y, element)
+        return float('inf')
+
+    def get_bounds(self) -> tuple[int, int, int, int]:
+        """Get grid bounds (min_gx, min_gy, max_gx, max_gy)."""
+        min_gx, min_gy = self._to_grid(self._bounds[0], self._bounds[1])
+        max_gx, max_gy = self._to_grid(self._bounds[2], self._bounds[3])
+        return (min_gx, min_gy, max_gx, max_gy)
