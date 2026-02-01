@@ -69,24 +69,40 @@ class PathOptimizer:
         # Pass 3: Merge colinear segments
         points = self._merge_colinear(points)
 
-        # Pass 4: Try to smooth corners by shortcutting (only with 45° paths)
+        # Pass 4: Remove backtrack/indent patterns
+        if self.hull_map is not None:
+            points = self._remove_backtracks(points, net_id)
+
+        # Pass 5: Try to smooth corners by shortcutting (only with 45° paths)
         if self.hull_map is not None:
             points = self._smooth_corners_45(points, net_id)
 
-        # Pass 5: Final colinear merge
+        # Pass 6: Minimize direction changes
+        if self.hull_map is not None:
+            points = self._minimize_direction_changes(points, net_id)
+
+        # Pass 7: Final colinear merge
         points = self._merge_colinear(points)
 
         return [p.to_tuple() for p in points]
 
-    def _remove_duplicates(self, points: list[Point], epsilon: float = 0.001) -> list[Point]:
+    def _remove_duplicates(self, points: list[Point], epsilon: float = 0.05) -> list[Point]:
         """Remove duplicate or nearly-duplicate consecutive points."""
         if len(points) < 2:
             return points
 
         result = [points[0]]
-        for p in points[1:]:
-            if p.distance_to(result[-1]) > epsilon:
+        for i, p in enumerate(points[1:], 1):
+            # Always keep the last point
+            if i == len(points) - 1:
+                if p.distance_to(result[-1]) > 0.001:  # Only skip true duplicates for endpoint
+                    result.append(p)
+            elif p.distance_to(result[-1]) > epsilon:
                 result.append(p)
+
+        # Ensure we have at least start and end
+        if len(result) == 1 and len(points) > 1:
+            result.append(points[-1])
 
         return result
 
@@ -122,6 +138,225 @@ class PathOptimizer:
 
         result.append(points[-1])
         return result
+
+    def _remove_backtracks(self, points: list[Point], net_id: Optional[int]) -> list[Point]:
+        """
+        Remove backtrack/indent patterns where the path reverses direction.
+
+        Detects patterns like: NW -> E -> N -> NW (indent around obstacle)
+        and tries to replace with more direct paths.
+        """
+        if len(points) < 4 or self.hull_map is None:
+            return points
+
+        result = [points[0]]
+        i = 0
+
+        while i < len(points) - 1:
+            # Try to find a simpler path from current point to later points
+            best_j = i + 1
+            best_path: list[Point] = []
+            best_savings = 0.0
+
+            # Look ahead up to 8 points for potential shortcuts (increased from 5)
+            for j in range(i + 2, min(i + 9, len(points))):
+                start = result[-1]
+                end = points[j]
+
+                # Try direct path first
+                if self._path_clear(start, end, net_id):
+                    dx = end.x - start.x
+                    dy = end.y - start.y
+                    if self._is_45_degree_angle(dx, dy):
+                        # Direct 45° path - calculate savings
+                        direct_len = start.distance_to(end)
+                        original_len = self._path_length(points[i:j+1])
+                        savings = original_len - direct_len
+                        if savings > best_savings:
+                            best_j = j
+                            best_path = []
+                            best_savings = savings
+                        continue
+
+                # Try single-midpoint dogleg
+                mid = self._find_best_midpoint(start, end, net_id)
+                if mid is not None:
+                    # Check if this is shorter than going through all intermediate points
+                    direct_len = start.distance_to(mid) + mid.distance_to(end)
+                    original_len = self._path_length(points[i:j+1])
+                    savings = original_len - direct_len
+                    if savings > best_savings and savings > 0.01:  # At least some savings
+                        best_j = j
+                        best_path = [mid]
+                        best_savings = savings
+
+            # Add the best path found
+            for p in best_path:
+                result.append(p)
+            result.append(points[best_j])
+            i = best_j
+
+        return result
+
+    def _path_length(self, points: list[Point]) -> float:
+        """Calculate total length of a path."""
+        if len(points) < 2:
+            return 0.0
+        total = 0.0
+        for i in range(1, len(points)):
+            total += points[i].distance_to(points[i-1])
+        return total
+
+    def _minimize_direction_changes(self, points: list[Point], net_id: Optional[int]) -> list[Point]:
+        """
+        Minimize the number of direction changes in the path.
+
+        For each triplet of points A-B-C where direction changes at B,
+        try to find an alternative that eliminates or reduces the turn.
+        """
+        if len(points) < 3 or self.hull_map is None:
+            return points
+
+        result = [points[0]]
+        i = 0
+
+        while i < len(points) - 1:
+            if i >= len(points) - 2:
+                result.append(points[i + 1])
+                i += 1
+                continue
+
+            curr = result[-1]
+            next_pt = points[i + 1]
+            after = points[i + 2]
+
+            # Calculate current direction and next direction
+            dx1 = next_pt.x - curr.x
+            dy1 = next_pt.y - curr.y
+            dx2 = after.x - next_pt.x
+            dy2 = after.y - next_pt.y
+
+            angle1 = math.atan2(dy1, dx1)
+            angle2 = math.atan2(dy2, dx2)
+            angle_diff = abs(angle2 - angle1)
+            if angle_diff > math.pi:
+                angle_diff = 2 * math.pi - angle_diff
+
+            # If there's a significant direction change, try to simplify
+            if angle_diff > math.radians(30):
+                # Try going directly from curr to after
+                if self._path_clear(curr, after, net_id):
+                    dx = after.x - curr.x
+                    dy = after.y - curr.y
+                    if self._is_45_degree_angle(dx, dy):
+                        # Skip the intermediate point
+                        result.append(after)
+                        i += 2
+                        continue
+
+                # Try a single dogleg from curr to after
+                mid = self._find_best_midpoint(curr, after, net_id)
+                if mid is not None:
+                    result.append(mid)
+                    result.append(after)
+                    i += 2
+                    continue
+
+            # No simplification found, keep the point
+            result.append(next_pt)
+            i += 1
+
+        # Add final point if not already added
+        if result[-1] != points[-1]:
+            result.append(points[-1])
+
+        return result
+
+    def _find_best_midpoint(self, start: Point, end: Point, net_id: Optional[int]) -> Optional[Point]:
+        """
+        Find the best midpoint for a dogleg that minimizes path length.
+
+        Tries multiple candidate midpoints and returns the one that gives
+        the shortest valid path.
+        """
+        dx = end.x - start.x
+        dy = end.y - start.y
+        adx = abs(dx)
+        ady = abs(dy)
+
+        candidates = []
+
+        # Generate candidate midpoints for different dogleg patterns
+        if adx >= ady:
+            # Horizontal dominant
+            # Option 1: Diagonal first
+            diag = ady
+            mid1 = Point(start.x + diag * (1 if dx > 0 else -1),
+                        start.y + diag * (1 if dy > 0 else -1))
+            # Option 2: Horizontal first
+            horiz = adx - ady
+            mid2 = Point(start.x + horiz * (1 if dx > 0 else -1), start.y)
+            candidates.extend([mid1, mid2])
+        else:
+            # Vertical dominant
+            # Option 1: Diagonal first
+            diag = adx
+            mid1 = Point(start.x + diag * (1 if dx > 0 else -1),
+                        start.y + diag * (1 if dy > 0 else -1))
+            # Option 2: Vertical first
+            vert = ady - adx
+            mid2 = Point(start.x, start.y + vert * (1 if dy > 0 else -1))
+            candidates.extend([mid1, mid2])
+
+        # Also try midpoints that go to end's x or y first
+        mid3 = Point(end.x, start.y)  # Go to end's x first
+        mid4 = Point(start.x, end.y)  # Go to end's y first
+        candidates.extend([mid3, mid4])
+
+        # Find shortest valid path
+        best_mid = None
+        best_len = float('inf')
+
+        for mid in candidates:
+            # Check both segments are at 45° and clear
+            dx1 = mid.x - start.x
+            dy1 = mid.y - start.y
+            dx2 = end.x - mid.x
+            dy2 = end.y - mid.y
+
+            if not self._is_45_degree_angle(dx1, dy1):
+                continue
+            if not self._is_45_degree_angle(dx2, dy2):
+                continue
+            if not self._path_clear(start, mid, net_id):
+                continue
+            if not self._path_clear(mid, end, net_id):
+                continue
+
+            path_len = start.distance_to(mid) + mid.distance_to(end)
+            if path_len < best_len:
+                best_len = path_len
+                best_mid = mid
+
+        return best_mid
+
+    def _detect_backtrack(self, p1: Point, p2: Point, p3: Point) -> bool:
+        """
+        Detect if moving from p1->p2->p3 involves a backtrack.
+
+        A backtrack occurs when the direction from p2->p3 has a component
+        that is opposite to the direction from p1->p2.
+        """
+        dx1 = p2.x - p1.x
+        dy1 = p2.y - p1.y
+        dx2 = p3.x - p2.x
+        dy2 = p3.y - p2.y
+
+        # Check if x or y direction reverses
+        x_reverses = (dx1 > 0.01 and dx2 < -0.01) or (dx1 < -0.01 and dx2 > 0.01)
+        y_reverses = (dy1 > 0.01 and dy2 < -0.01) or (dy1 < -0.01 and dy2 > 0.01)
+
+        return x_reverses or y_reverses
 
     def _enforce_45_degrees(self, points: list[Point], net_id: Optional[int]) -> list[Point]:
         """
