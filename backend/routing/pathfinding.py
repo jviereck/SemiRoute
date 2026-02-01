@@ -215,8 +215,8 @@ def astar_search(
             if not is_goal and is_blocked:
                 continue
 
-            # For diagonal moves, check corners to prevent cutting through
-            if dx != 0 and dy != 0:
+            # For diagonal moves, check corners to prevent cutting through (skip if moving to goal)
+            if dx != 0 and dy != 0 and not is_goal:
                 c1 = (cx + dx, cy)
                 c2 = (cx, cy + dy)
                 c1_blocked = (c1 in blocked or c1 in extra) and c1 not in allowed
@@ -400,37 +400,10 @@ def astar_search_element_aware(
             if not is_goal and is_blocked:
                 continue
 
-            # Corner cutting check for diagonal moves
-            if dx != 0 and dy != 0:
-                c1_x, c1_y = cx + dx, cy
-                c2_x, c2_y = cx, cy + dy
-                c1_world_x, c1_world_y = c1_x * resolution, c1_y * resolution
-                c2_world_x, c2_world_y = c2_x * resolution, c2_y * resolution
-
-                c1_blocked = obstacle_map.is_blocked(c1_world_x, c1_world_y, trace_radius, net_id)
-                c2_blocked = obstacle_map.is_blocked(c2_world_x, c2_world_y, trace_radius, net_id)
-
-                # Also check pending for corners
-                if pending_traces:
-                    if not c1_blocked:
-                        for pending in pending_traces:
-                            if _point_blocked_by_pending(
-                                c1_world_x, c1_world_y, trace_radius,
-                                pending, obstacle_map.clearance, net_id
-                            ):
-                                c1_blocked = True
-                                break
-                    if not c2_blocked:
-                        for pending in pending_traces:
-                            if _point_blocked_by_pending(
-                                c2_world_x, c2_world_y, trace_radius,
-                                pending, obstacle_map.clearance, net_id
-                            ):
-                                c2_blocked = True
-                                break
-
-                if c1_blocked or c2_blocked:
-                    continue
+            # Note: For element-aware maps, we skip corner/midpoint checks for diagonal moves.
+            # The is_blocked() check uses exact geometry with clearance at each cell, so if both
+            # source and destination cells are free, the diagonal path is valid.
+            # This enables routing through narrow diagonal corridors between pads.
 
             # Calculate cost (same as before)
             move_cost = DIRECTION_COSTS[dir_idx]
