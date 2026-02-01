@@ -800,7 +800,23 @@
      * Continuously routes to cursor position (debounced).
      */
     function handleTraceMouseMove(e) {
-        const svgPoint = viewer.screenToSVG(e.clientX, e.clientY);
+        let svgPoint = viewer.screenToSVG(e.clientX, e.clientY);
+
+        // Snap to pad center if mouse is over a pad
+        const match = findBestMatchAtPoint(e.clientX, e.clientY);
+        if (match && match.type === 'pad') {
+            const pad = match.element;
+            const dataX = pad.dataset.x;
+            const dataY = pad.dataset.y;
+            const cx = pad.getAttribute('cx');
+            const cy = pad.getAttribute('cy');
+
+            if (dataX && dataY) {
+                svgPoint = { x: parseFloat(dataX), y: parseFloat(dataY) };
+            } else if (cx && cy) {
+                svgPoint = { x: parseFloat(cx), y: parseFloat(cy) };
+            }
+        }
 
         // Handle companion mode
         if (companionMode && companionMode.companions.length > 0) {
