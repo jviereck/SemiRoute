@@ -27,6 +27,7 @@ class RouteRequest(BaseModel):
     layer: str
     width: float
     net_id: Optional[int] = None
+    skip_endpoint_check: bool = False  # Skip endpoint net validation (for companion routing)
 
 
 class RouteResponse(BaseModel):
@@ -209,17 +210,25 @@ async def route_trace(request: RouteRequest):
         )
 
     # Check if endpoint is on a different-net pad (prevent routing to wrong net)
-    end_net_id = trace_router.find_net_at_point(
-        request.end_x, request.end_y, request.layer
-    )
-    if end_net_id is not None and net_id is not None and end_net_id != net_id:
-        end_net_name = pcb_parser.nets.get(end_net_id, f"Net {end_net_id}")
-        start_net_name = pcb_parser.nets.get(net_id, f"Net {net_id}")
-        return RouteResponse(
-            success=False,
-            path=[],
-            message=f"Cannot route to different net: endpoint is on {end_net_name}, but routing from {start_net_name}"
+    # Skip this check for companion routing where we route to arbitrary offset points
+    if not request.skip_endpoint_check:
+        end_net_id = trace_router.find_net_at_point(
+            request.end_x, request.end_y, request.layer
         )
+        if end_net_id is not None and net_id is not None and end_net_id != net_id:
+            end_net_name = pcb_parser.nets.get(end_net_id, f"Net {end_net_id}")
+            start_net_name = pcb_parser.nets.get(net_id, f"Net {net_id}")
+            return RouteResponse(
+                success=False,
+                path=[],
+                message=f"Cannot route to different net: endpoint is on {end_net_name}, but routing from {start_net_name}"
+            )
+
+    # Check if start or end points are blocked
+    trace_radius = request.width / 2
+    obs_map = trace_router.get_obstacle_map(request.layer, net_id)
+    start_blocked = obs_map.is_blocked(request.start_x, request.start_y, trace_radius, net_id)
+    end_blocked = obs_map.is_blocked(request.end_x, request.end_y, trace_radius, net_id)
 
     path = trace_router.route(
         start_x=request.start_x,
@@ -238,10 +247,19 @@ async def route_trace(request: RouteRequest):
             message=f"Route found with {len(path)} waypoints"
         )
     else:
+        # Provide more detailed failure message
+        if start_blocked and end_blocked:
+            msg = "Both start and end points are blocked"
+        elif start_blocked:
+            msg = "Start point is blocked (inside obstacle/clearance zone)"
+        elif end_blocked:
+            msg = "End point is blocked (inside obstacle/clearance zone)"
+        else:
+            msg = "No valid route found - path may be blocked by obstacles"
         return RouteResponse(
             success=False,
             path=[],
-            message="No valid route found - path may be blocked"
+            message=msg
         )
 
 

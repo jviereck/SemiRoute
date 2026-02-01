@@ -1428,6 +1428,13 @@
             viewer.highlightReferenceByNet(referenceRoute.netId, referenceRoute.segments[0]?.layer);
         }
 
+        console.log('Reference selected:', {
+            netId: referenceRoute.netId,
+            segments: referenceRoute.segments.length,
+            firstSegmentPath: referenceRoute.segments[0]?.path?.length || 0,
+            layer: companionMode.currentLayer
+        });
+
         updateCompanionStatus();
         updateTraceStatus('Reference selected. Alt+Click pad/via/trace to add companions', 'routing');
     }
@@ -1486,6 +1493,8 @@
 
         // Show start marker for this companion
         viewer.showCompanionStartMarker(startX, startY, companionMode.companions.length);
+
+        console.log(`Added companion ${companionMode.companions.length}: net=${netId}, start=(${startX.toFixed(2)}, ${startY.toFixed(2)})`);
 
         updateCompanionStatus();
         hideTraceError();
@@ -1565,10 +1574,23 @@
 
             // Route each companion
             const routePromises = companionMode.companions.map(async (companion, index) => {
-                // Calculate offset target point
-                const offset = companionMode.baseSpacing * companion.offsetIndex;
+                // Determine which side of the reference the companion's start point is on
+                // by computing the cross product: (start - refPoint) × direction
+                const toStartX = companion.startPoint.x - refPoint.x;
+                const toStartY = companion.startPoint.y - refPoint.y;
+                const crossProduct = toStartX * direction.y - toStartY * direction.x;
+
+                // If cross product > 0, start is on the "positive perpendicular" side
+                // If cross product < 0, start is on the "negative perpendicular" side
+                // Use the same side for offset to avoid crossing the reference
+                const offsetSign = crossProduct >= 0 ? 1 : -1;
+
+                // Calculate offset target point on the same side as start point
+                const offset = companionMode.baseSpacing * companion.offsetIndex * offsetSign;
                 const targetX = refPoint.x + perpX * offset;
                 const targetY = refPoint.y + perpY * offset;
+
+                console.log(`Companion ${index}: routing from (${companion.startPoint.x.toFixed(2)}, ${companion.startPoint.y.toFixed(2)}) to (${targetX.toFixed(2)}, ${targetY.toFixed(2)}), net=${companion.netId}, layer=${companionMode.currentLayer}`);
 
                 try {
                     const response = await fetch('/api/route', {
@@ -1581,7 +1603,8 @@
                             end_y: targetY,
                             layer: companionMode.currentLayer,
                             width: companion.width,
-                            net_id: companion.netId
+                            net_id: companion.netId,
+                            skip_endpoint_check: true  // Companion routing to arbitrary offset points
                         })
                     });
 
@@ -1590,9 +1613,11 @@
                     if (data.success && data.path.length > 0) {
                         companion.pendingPath = data.path;
                         companion.routeSuccess = true;
+                        console.log(`Companion ${index}: route SUCCESS, ${data.path.length} waypoints`);
                     } else {
                         companion.pendingPath = null;
                         companion.routeSuccess = false;
+                        console.log(`Companion ${index}: route FAILED - ${data.message || 'no path found'}`);
                     }
                 } catch (error) {
                     if (error.name !== 'AbortError') {
