@@ -26,6 +26,14 @@ class SVGViewer {
         this.isZooming = false;
         this._zoomEndTimer = null;
 
+        // CSS transform state for smooth zooming
+        // We use CSS transforms during zoom for GPU acceleration,
+        // then commit to viewBox when zooming ends for sharp rendering
+        this._cssScale = 1;
+        this._cssTranslateX = 0;
+        this._cssTranslateY = 0;
+        this._baseViewBox = null;  // viewBox at start of zoom gesture
+
         // Bind event handlers
         this._onMouseDown = this._onMouseDown.bind(this);
         this._onMouseMove = this._onMouseMove.bind(this);
@@ -140,10 +148,19 @@ class SVGViewer {
 
     /**
      * Handle mouse wheel for zooming.
-     * Uses requestAnimationFrame to batch rapid wheel events for smooth performance.
+     * Uses CSS transforms during zoom for GPU acceleration (fixes Firefox lag),
+     * then commits to viewBox when zooming ends for sharp rendering.
      */
     _onWheel(e) {
         e.preventDefault();
+
+        // Initialize base viewBox at start of zoom gesture
+        if (!this._baseViewBox) {
+            this._baseViewBox = { ...this.viewBox };
+            this._cssScale = 1;
+            this._cssTranslateX = 0;
+            this._cssTranslateY = 0;
+        }
 
         // Mark as zooming (for pausing routing during zoom)
         this.isZooming = true;
@@ -151,9 +168,8 @@ class SVGViewer {
             clearTimeout(this._zoomEndTimer);
         }
         this._zoomEndTimer = setTimeout(() => {
-            this.isZooming = false;
-            this._zoomEndTimer = null;
-        }, 150);  // Clear after 150ms of no scroll
+            this._commitZoom();
+        }, 150);  // Commit after 150ms of no scroll
 
         // Get mouse position in SVG coordinates BEFORE zoom
         const svgPoint = this._screenToSVG(e.clientX, e.clientY);
@@ -172,7 +188,6 @@ class SVGViewer {
         }
 
         // Adjust viewBox origin to keep mouse position fixed
-        // The mouse point should stay at the same screen position after zoom
         const rect = this.container.getBoundingClientRect();
         const mouseRatioX = (e.clientX - rect.left) / rect.width;
         const mouseRatioY = (e.clientY - rect.top) / rect.height;
@@ -183,13 +198,63 @@ class SVGViewer {
         this.viewBox.width = newWidth;
         this.viewBox.height = newHeight;
 
-        // Batch DOM updates with requestAnimationFrame for smooth performance
+        // Calculate CSS transform relative to base viewBox
+        this._cssScale = this._baseViewBox.width / this.viewBox.width;
+
+        // Calculate translation to keep the view centered correctly
+        // The transform origin is at the center of the container
+        const baseCenterX = this._baseViewBox.x + this._baseViewBox.width / 2;
+        const baseCenterY = this._baseViewBox.y + this._baseViewBox.height / 2;
+        const viewCenterX = this.viewBox.x + this.viewBox.width / 2;
+        const viewCenterY = this.viewBox.y + this.viewBox.height / 2;
+
+        // Convert SVG coordinate difference to screen pixels
+        const svgToScreenX = rect.width / this._baseViewBox.width;
+        const svgToScreenY = rect.height / this._baseViewBox.height;
+
+        this._cssTranslateX = (baseCenterX - viewCenterX) * svgToScreenX * this._cssScale;
+        this._cssTranslateY = (baseCenterY - viewCenterY) * svgToScreenY * this._cssScale;
+
+        // Apply CSS transform (GPU-accelerated, no re-rasterization)
         if (!this._rafId) {
             this._rafId = requestAnimationFrame(() => {
                 this._rafId = null;
-                this._updateTransform();
+                this._applyCSSTransform();
             });
         }
+    }
+
+    /**
+     * Apply CSS transform for smooth zooming.
+     */
+    _applyCSSTransform() {
+        if (!this.svg) return;
+        this.svg.style.transform = `translate(${this._cssTranslateX}px, ${this._cssTranslateY}px) scale(${this._cssScale})`;
+        this.svg.style.transformOrigin = 'center center';
+    }
+
+    /**
+     * Commit zoom: update viewBox and reset CSS transform.
+     * This gives sharp rendering after zooming ends.
+     */
+    _commitZoom() {
+        this.isZooming = false;
+        this._zoomEndTimer = null;
+
+        // Reset CSS transform
+        if (this.svg) {
+            this.svg.style.transform = '';
+            this.svg.style.transformOrigin = '';
+        }
+
+        // Update the actual viewBox
+        this._updateTransform();
+
+        // Clear base viewBox for next gesture
+        this._baseViewBox = null;
+        this._cssScale = 1;
+        this._cssTranslateX = 0;
+        this._cssTranslateY = 0;
     }
 
     /**

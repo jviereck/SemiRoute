@@ -182,6 +182,8 @@ body {
 #svg-container svg {
     width: 100%;
     height: 100%;
+    /* Enable GPU compositing for smooth CSS transform zooming */
+    will-change: transform;
 }
 
 /* Scrollbar styling */
