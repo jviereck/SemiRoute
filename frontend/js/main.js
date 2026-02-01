@@ -1847,9 +1847,11 @@
     async function commitCompanionSegments() {
         if (!companionMode || companionMode.companions.length === 0) return;
 
-        for (const companion of companionMode.companions) {
+        for (let i = 0; i < companionMode.companions.length; i++) {
+            const companion = companionMode.companions[i];
             if (companion.pendingPath && companion.routeSuccess) {
                 const segmentIndex = companion.sessionSegments.length;
+                const waypointCount = companion.pendingPath.length;
 
                 const segment = {
                     path: companion.pendingPath,
@@ -1868,10 +1870,15 @@
                     companion.netId
                 );
 
+                // Log commit info
+                console.log(`Companion ${i}: committed segment ${segmentIndex}, ${waypointCount} waypoints, net=${companion.netId}, layer=${companionMode.currentLayer}`);
+
                 // Update start point to end of committed path
                 const lastPoint = companion.pendingPath[companion.pendingPath.length - 1];
                 companion.startPoint = { x: lastPoint[0], y: lastPoint[1] };
                 companion.pendingPath = null;
+            } else if (companion.pendingPath && !companion.routeSuccess) {
+                console.log(`Companion ${i}: SKIPPED (route failed), net=${companion.netId}`);
             }
         }
 
