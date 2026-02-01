@@ -928,11 +928,18 @@
 
                     hideTraceError();
                 } else {
+                    console.log('Route failed:', {
+                        from: startPoint,
+                        to: cursorPoint,
+                        layer: routingSession.currentLayer,
+                        net: routingSession.startNet,
+                        message: data.message
+                    });
                     routingSession.pendingPath = null;
                     viewer.clearPendingTrace();
 
-                    // Show error message if routing failed due to different net
-                    if (data.message && data.message.toLowerCase().includes('different net')) {
+                    // Show error message for routing failures
+                    if (data.message) {
                         showTraceError(data.message);
                     }
                 }
@@ -974,8 +981,18 @@
     async function handleTraceClick(e, clickedElement) {
         const layer = document.getElementById('trace-layer').value;
         const width = parseFloat(document.getElementById('trace-width').value);
-        const target = getTargetCoordinates(e, clickedElement);
         const match = findBestMatchAtPoint(e.clientX, e.clientY);
+
+        // When routing, only snap to same-net pads (avoid snapping to different-net pads)
+        let snapElement = clickedElement;
+        if (routingSession && routingSession.startNet) {
+            const clickedNet = clickedElement ? parseInt(clickedElement.dataset.net, 10) : null;
+            if (clickedNet && clickedNet !== routingSession.startNet) {
+                // Different net - don't snap to this pad, use raw cursor position
+                snapElement = null;
+            }
+        }
+        const target = getTargetCoordinates(e, snapElement);
 
         // Handle companion mode: Alt+Click on pad/via/trace adds companion
         if (e.altKey && companionMode && companionMode.referenceRoute) {
@@ -1097,7 +1114,26 @@
         }
 
         const bestMatch = findBestMatchAtPoint(e.clientX, e.clientY);
-        const target = getTargetCoordinates(e, bestMatch ? bestMatch.element : null);
+
+        // Only snap to same-net pads when ending route
+        let snapElement = bestMatch ? bestMatch.element : null;
+        if (routingSession.startNet && snapElement) {
+            const matchNet = parseInt(snapElement.dataset.net, 10);
+            if (matchNet && matchNet !== routingSession.startNet) {
+                // Different net - don't snap, use raw cursor position
+                snapElement = null;
+            }
+        }
+        const target = getTargetCoordinates(e, snapElement);
+
+        console.log('Double-click to commit:', {
+            target: target,
+            bestMatch: bestMatch ? { type: bestMatch.type, net: bestMatch.element?.dataset?.net } : null,
+            snappedTo: snapElement ? 'same-net pad' : 'cursor position',
+            currentStart: routingSession.startPoint,
+            previousCursor: routingSession.cursorPoint,
+            hadPendingPath: !!routingSession.pendingPath
+        });
 
         // Route to double-click point
         routingSession.cursorPoint = { x: target.x, y: target.y };
@@ -1106,6 +1142,8 @@
         // Commit if there's a path
         if (routingSession.pendingPath) {
             await commitCurrentSegment(target.x, target.y);
+        } else {
+            console.log('Double-click: No path found, cannot commit');
         }
 
         // End routing session (keep committed traces)
