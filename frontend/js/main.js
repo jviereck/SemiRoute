@@ -603,10 +603,10 @@
 
                 // Render each segment
                 route.segments.forEach((seg, idx) => {
-                    viewer.addCommittedSegment(
+                    viewer.confirmPendingTrace(
                         seg.path,
-                        seg.width,
                         seg.layer,
+                        seg.width,
                         route.id,
                         idx,
                         route.netId
@@ -619,7 +619,8 @@
 
             console.log(`Loaded ${routeGroups.size} pending routes from backend`);
         } catch (error) {
-            console.error('Failed to load pending traces:', error);
+            console.error('Failed to load pending traces:', error.message || error);
+            console.error('Stack:', error.stack);
         }
     }
 
