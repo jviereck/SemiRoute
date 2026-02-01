@@ -60,6 +60,9 @@ class HullMap:
         # All hulls (for iteration)
         self._hulls: list[IndexedHull] = []
 
+        # Pending trace hulls (temporary, cleared after each route)
+        self._pending_hulls: list[IndexedHull] = []
+
         # Build hulls
         self._build_hulls()
 
@@ -417,8 +420,8 @@ class HullMap:
             width: Trace width in mm
             net_id: Net ID of the trace (same-net crossings allowed)
         """
-        if not hasattr(self, '_pending_hulls'):
-            self._pending_hulls: list[IndexedHull] = []
+        if len(segments) < 2:
+            return  # No segments to add
 
         # Create a hull for each segment
         for i in range(len(segments) - 1):
@@ -453,8 +456,8 @@ class HullMap:
 
     def clear_pending_hulls(self) -> None:
         """Remove all pending trace hulls."""
-        if not hasattr(self, '_pending_hulls'):
-            return
+        if not self._pending_hulls:
+            return  # Nothing to clear
 
         # Remove from _hulls list
         pending_set = set(id(h) for h in self._pending_hulls)
