@@ -772,6 +772,28 @@ class SVGViewer {
     }
 
     /**
+     * Highlight traces on a specific net and layer as reference.
+     * Used for PCB board traces that don't have a routeId.
+     * @param {number} netId - Net ID to highlight
+     * @param {string} layer - Layer to filter by (optional)
+     */
+    highlightReferenceByNet(netId, layer = null) {
+        if (!this.svg) return;
+
+        this.clearReferenceHighlight();
+
+        // Find all traces with this net ID
+        let selector = `.trace[data-net="${netId}"]`;
+        if (layer) {
+            selector = `.trace[data-net="${netId}"][data-layer="${layer}"]`;
+        }
+
+        this.svg.querySelectorAll(selector).forEach(el => {
+            el.classList.add('reference-trace');
+        });
+    }
+
+    /**
      * Render a companion trace preview.
      * @param {Array} path - Array of [x, y] points
      * @param {string} layer - Layer name

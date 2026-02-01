@@ -690,9 +690,9 @@
     function setupPadClickHandler() {
         const container = document.getElementById('svg-container');
 
-        // Mouse move: continuous routing preview
+        // Mouse move: continuous routing preview (for both normal routing and companion mode)
         container.addEventListener('mousemove', (e) => {
-            if (appMode === 'trace' && routingSession) {
+            if (appMode === 'trace' && (routingSession || companionMode)) {
                 handleTraceMouseMove(e);
             }
             handleNetHover(e);
@@ -982,6 +982,10 @@
             if (clickedElement && clickedElement.classList.contains('pad')) {
                 addCompanionTrace(clickedElement);
                 return;
+            } else {
+                // Alt+Click on non-pad in companion mode - ignore (don't start new routing)
+                showTraceError('Alt+Click on a pad to add a companion');
+                return;
             }
         }
 
@@ -994,17 +998,24 @@
         // Handle clicking on a trace (no active session)
         if (!routingSession && !companionMode && match) {
             if (match.type === 'user-trace' || match.type === 'user-via') {
-                // User-created segment: select it (allows deletion)
+                // User-created segment: Shift+click for selection, regular click for reference
                 const routeId = match.element.dataset.traceId;
                 const segmentIndex = parseInt(match.element.dataset.segmentIndex, 10);
                 if (routeId && !isNaN(segmentIndex)) {
                     if (e.shiftKey) {
                         toggleSegmentSelection(routeId, segmentIndex);
+                        updateTraceStatus('Segment selected. Backspace to delete', 'routing');
+                        return;
                     } else {
+                        // Try to select as reference for companion mode
+                        if (selectReferenceTrace(match)) {
+                            return;
+                        }
+                        // Fall back to segment selection if reference selection fails
                         selectSegment(routeId, segmentIndex);
+                        updateTraceStatus('Segment selected. Backspace to delete, or click pad to route', 'routing');
+                        return;
                     }
-                    updateTraceStatus('Segment selected. Backspace to delete, or click pad to route', 'routing');
-                    return;
                 }
             } else if (match.type === 'trace') {
                 // PCB board trace: select as reference for companion mode
@@ -1409,15 +1420,18 @@
         // Highlight the reference trace
         if (referenceRoute.routeId) {
             viewer.highlightReferenceTrace(referenceRoute.routeId);
+        } else if (referenceRoute.netId) {
+            // For PCB traces, highlight by net ID
+            viewer.highlightReferenceByNet(referenceRoute.netId, referenceRoute.segments[0]?.layer);
         }
 
         updateCompanionStatus();
-        updateTraceStatus('Reference selected. Ctrl+Click pads to add companions', 'routing');
+        updateTraceStatus('Reference selected. Alt+Click pads to add companions', 'routing');
     }
 
     /**
      * Add a companion trace from a clicked pad.
-     * @param {Element} clickedElement - The pad element that was Ctrl+clicked
+     * @param {Element} clickedElement - The pad element that was Alt+clicked
      */
     function addCompanionTrace(clickedElement) {
         if (!companionMode) return;
