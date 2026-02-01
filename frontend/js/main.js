@@ -491,7 +491,7 @@
     let pendingCursorUpdate = false;  // True if cursor moved while routing
     let routeDebounceTimer = null;    // Timer for debouncing route requests
     let routeAbortController = null;  // AbortController for canceling in-flight requests
-    const ROUTE_DEBOUNCE_MS = 50;     // Minimum delay between route requests
+    const ROUTE_DEBOUNCE_MS = 0;      // Route immediately (no delay)
 
     // Companion mode state - routes multiple traces following a reference
     let companionMode = null;
@@ -827,13 +827,8 @@
                 return;
             }
 
-            if (routeDebounceTimer) {
-                clearTimeout(routeDebounceTimer);
-            }
-            routeDebounceTimer = setTimeout(() => {
-                routeDebounceTimer = null;
-                routeCompanionsToCursor();
-            }, ROUTE_DEBOUNCE_MS);
+            // Route immediately - chaining handles continuous updates
+            routeCompanionsToCursor();
             return;
         }
 
@@ -848,14 +843,8 @@
             return;
         }
 
-        // Debounce route requests to prevent overwhelming the server
-        if (routeDebounceTimer) {
-            clearTimeout(routeDebounceTimer);
-        }
-        routeDebounceTimer = setTimeout(() => {
-            routeDebounceTimer = null;
-            routeToCursor(true);  // Skip endpoint check for mouse move preview
-        }, ROUTE_DEBOUNCE_MS);
+        // Route immediately - chaining handles continuous updates
+        routeToCursor(true);  // Skip endpoint check for mouse move preview
     }
 
     /**
@@ -977,17 +966,10 @@
             isRouting = false;
             routeAbortController = null;
 
-            // If cursor moved while we were routing, start another route (debounced)
+            // If cursor moved while we were routing, start another route immediately
             if (pendingCursorUpdate && routingSession) {
                 pendingCursorUpdate = false;
-                // Use debounce instead of immediate call to prevent flooding
-                if (routeDebounceTimer) {
-                    clearTimeout(routeDebounceTimer);
-                }
-                routeDebounceTimer = setTimeout(() => {
-                    routeDebounceTimer = null;
-                    routeToCursor(true);  // Skip endpoint check for mouse move preview
-                }, ROUTE_DEBOUNCE_MS);
+                routeToCursor(true);  // Skip endpoint check for mouse move preview
             }
         }
     }
@@ -1711,16 +1693,10 @@
         } finally {
             isRouting = false;
 
-            // Chain next request if cursor moved
+            // Chain next request immediately if cursor moved
             if (pendingCursorUpdate && companionMode) {
                 pendingCursorUpdate = false;
-                if (routeDebounceTimer) {
-                    clearTimeout(routeDebounceTimer);
-                }
-                routeDebounceTimer = setTimeout(() => {
-                    routeDebounceTimer = null;
-                    routeCompanionsToCursor();
-                }, ROUTE_DEBOUNCE_MS);
+                routeCompanionsToCursor();
             }
         }
     }
