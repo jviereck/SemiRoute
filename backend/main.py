@@ -203,6 +203,19 @@ async def route_trace(request: RouteRequest):
             request.start_x, request.start_y, request.layer
         )
 
+    # Check if endpoint is on a different-net pad (prevent routing to wrong net)
+    end_net_id = trace_router.find_net_at_point(
+        request.end_x, request.end_y, request.layer
+    )
+    if end_net_id is not None and net_id is not None and end_net_id != net_id:
+        end_net_name = pcb_parser.nets.get(end_net_id, f"Net {end_net_id}")
+        start_net_name = pcb_parser.nets.get(net_id, f"Net {net_id}")
+        return RouteResponse(
+            success=False,
+            path=[],
+            message=f"Cannot route to different net: endpoint is on {end_net_name}, but routing from {start_net_name}"
+        )
+
     path = trace_router.route(
         start_x=request.start_x,
         start_y=request.start_y,

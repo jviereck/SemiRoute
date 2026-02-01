@@ -16,7 +16,8 @@
     "test:multilayer": "node tests/test_multilayer_routing.js",
     "test:selection": "node tests/test_segment_selection.js",
     "test:highlight": "node tests/test_net_highlight.js",
-    "test:zoom": "node tests/test_zoom_performance.js"
+    "test:zoom": "node tests/test_zoom_performance.js",
+    "test:c5-trace-add": "node tests/test_c5_trace_add.js"
   },
   "keywords": [],
   "author": "",
