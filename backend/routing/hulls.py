@@ -151,6 +151,31 @@ class LineChain:
 
         return (best_point, best_edge, best_t)
 
+    def segment_to_boundary_distance(self, p1: Point, p2: Point) -> tuple[float, Point, int]:
+        """
+        Find the minimum distance from a line segment to the hull boundary.
+
+        Args:
+            p1, p2: Segment endpoints
+
+        Returns:
+            (min_distance, closest_point_on_hull, edge_index)
+        """
+        min_dist_sq = float('inf')
+        closest_point = self.points[0]
+        closest_edge = 0
+
+        # Check distance from segment to each hull edge
+        for i, (e1, e2) in enumerate(self.edges()):
+            # Find minimum distance between segments (p1, p2) and (e1, e2)
+            dist_sq, pt = _segment_segment_distance_sq(p1, p2, e1, e2)
+            if dist_sq < min_dist_sq:
+                min_dist_sq = dist_sq
+                closest_point = pt
+                closest_edge = i
+
+        return (min_dist_sq ** 0.5, closest_point, closest_edge)
+
     def centroid(self) -> Point:
         """Calculate centroid of the polygon."""
         if not self.points:
@@ -222,6 +247,40 @@ def point_to_segment_distance(p: Point, a: Point, b: Point) -> float:
     return p.distance_to(closest)
 
 
+def _segment_segment_distance_sq(p1: Point, p2: Point, p3: Point, p4: Point) -> tuple[float, Point]:
+    """
+    Calculate the squared minimum distance between two line segments.
+
+    Args:
+        p1, p2: First segment endpoints
+        p3, p4: Second segment endpoints
+
+    Returns:
+        (squared_distance, closest_point_on_second_segment)
+    """
+    # Check all four endpoint-to-segment distances
+    candidates = []
+
+    # p1 to segment (p3, p4)
+    c1, _ = closest_point_on_segment(p1, p3, p4)
+    candidates.append(((p1 - c1).length_sq(), c1))
+
+    # p2 to segment (p3, p4)
+    c2, _ = closest_point_on_segment(p2, p3, p4)
+    candidates.append(((p2 - c2).length_sq(), c2))
+
+    # p3 to segment (p1, p2)
+    c3, _ = closest_point_on_segment(p3, p1, p2)
+    candidates.append(((p3 - c3).length_sq(), p3))
+
+    # p4 to segment (p1, p2)
+    c4, _ = closest_point_on_segment(p4, p1, p2)
+    candidates.append(((p4 - c4).length_sq(), p4))
+
+    # Return the minimum
+    return min(candidates, key=lambda x: x[0])
+
+
 class HullGenerator:
     """Factory class for generating hulls from PCB elements."""
 
@@ -266,7 +325,7 @@ class HullGenerator:
 
         cx, cy = center.x, center.y
 
-        # 8 vertices in CCW order (starting from bottom-left corner, going CCW)
+        # 8 vertices in CCW order (starting from bottom-left, going CCW)
         points = [
             Point(cx - hw + chamfer, cy - hh),      # Bottom edge left
             Point(cx + hw - chamfer, cy - hh),      # Bottom edge right
@@ -325,6 +384,8 @@ class HullGenerator:
         - Two parallel lines offset from the segment
         - Semicircular caps at each end
 
+        Points are in CCW order (interior on left when traversing).
+
         Args:
             start: Start point of segment
             end: End point of segment
@@ -333,7 +394,7 @@ class HullGenerator:
             end_segments: Number of segments for each semicircular cap
 
         Returns:
-            LineChain forming a capsule shape
+            LineChain forming a capsule shape in CCW order
         """
         half_width = width / 2 + clearance
 
@@ -351,12 +412,12 @@ class HullGenerator:
 
         points = []
 
+        # Build hull in CW order first, then reverse for CCW
         # Left side (going from start to end, offset to the left)
         points.append(start + perp * half_width)
         points.append(end + perp * half_width)
 
-        # End cap (semicircle at end point, going from top to bottom via right)
-        # Include endpoint at angle=0 which extends furthest in direction of travel
+        # End cap (semicircle at end point, going from left to right via front)
         for i in range(1, end_segments + 1):
             angle = math.pi / 2 - math.pi * i / end_segments
             offset = dir_norm * (half_width * math.cos(angle)) + perp * (half_width * math.sin(angle))
@@ -365,12 +426,18 @@ class HullGenerator:
         # Right side (going from end back to start, offset to the right)
         points.append(start - perp * half_width)
 
-        # Start cap (semicircle at start point, going from bottom to top via left)
-        # angle goes from -pi/2 to pi/2 via -pi (the left side)
+        # Start cap (semicircle at start point, going from right to left via back)
         for i in range(1, end_segments + 1):
             angle = -math.pi / 2 - math.pi * i / end_segments
             offset = dir_norm * (half_width * math.cos(angle)) + perp * (half_width * math.sin(angle))
             points.append(start + offset)
+
+        # Remove the last point if it duplicates the first (closing the loop)
+        if len(points) > 1 and abs(points[-1].x - points[0].x) < 1e-10 and abs(points[-1].y - points[0].y) < 1e-10:
+            points.pop()
+
+        # Reverse to get CCW order
+        points.reverse()
 
         return LineChain(points=points)
 
