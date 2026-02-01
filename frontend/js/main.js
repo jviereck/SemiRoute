@@ -1851,7 +1851,6 @@
             const companion = companionMode.companions[i];
             if (companion.pendingPath && companion.routeSuccess) {
                 const segmentIndex = companion.sessionSegments.length;
-                const waypointCount = companion.pendingPath.length;
 
                 const segment = {
                     path: companion.pendingPath,
@@ -1870,8 +1869,19 @@
                     companion.netId
                 );
 
-                // Log commit info
-                console.log(`Companion ${i}: committed segment ${segmentIndex}, ${waypointCount} waypoints, net=${companion.netId}, layer=${companionMode.currentLayer}`);
+                // Log full commit info like regular traces
+                const waypoints = companion.pendingPath.map(point => ({
+                    x: point[0],
+                    y: point[1],
+                    layer: companionMode.currentLayer
+                }));
+                console.log(`Companion ${i} committed:`, {
+                    routeId: companion.routeId,
+                    netId: companion.netId,
+                    segmentIndex: segmentIndex,
+                    waypointCount: waypoints.length,
+                    waypoints: waypoints
+                });
 
                 // Update start point to end of committed path
                 const lastPoint = companion.pendingPath[companion.pendingPath.length - 1];
