@@ -240,6 +240,35 @@ class SVGViewer {
     }
 
     /**
+     * Zoom by a factor, centered on the current view.
+     * @param {number} factor - Zoom factor (< 1 zooms in, > 1 zooms out)
+     */
+    zoomBy(factor) {
+        if (!this.svg) return;
+
+        // Calculate new dimensions
+        const newWidth = this.viewBox.width * factor;
+        const newHeight = this.viewBox.height * factor;
+
+        // Check zoom limits
+        const newScale = this.originalViewBox.width / newWidth;
+        if (newScale < this.minScale || newScale > this.maxScale) {
+            return;
+        }
+
+        // Keep center fixed
+        const centerX = this.viewBox.x + this.viewBox.width / 2;
+        const centerY = this.viewBox.y + this.viewBox.height / 2;
+
+        this.viewBox.x = centerX - newWidth / 2;
+        this.viewBox.y = centerY - newHeight / 2;
+        this.viewBox.width = newWidth;
+        this.viewBox.height = newHeight;
+
+        this._updateTransform();
+    }
+
+    /**
      * Toggle visibility of a layer.
      */
     toggleLayer(layerName, visible) {

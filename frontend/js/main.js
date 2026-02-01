@@ -1197,6 +1197,10 @@
         document.getElementById('trace-confirm').addEventListener('click', confirmTrace);
         document.getElementById('trace-cancel').addEventListener('click', cancelTrace);
         document.getElementById('clear-all-routes').addEventListener('click', clearAllRoutes);
+
+        // Zoom controls
+        document.getElementById('zoom-in').addEventListener('click', () => viewer.zoomBy(0.8));
+        document.getElementById('zoom-out').addEventListener('click', () => viewer.zoomBy(1.25));
     }
 
     /**
