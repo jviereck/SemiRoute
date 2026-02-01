@@ -842,6 +842,11 @@
                 } else {
                     routingSession.pendingPath = null;
                     viewer.clearPendingTrace();
+
+                    // Show error message if routing failed due to different net
+                    if (data.message && data.message.toLowerCase().includes('different net')) {
+                        showTraceError(data.message);
+                    }
                 }
             }
         } catch (error) {

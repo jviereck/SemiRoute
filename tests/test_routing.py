@@ -320,16 +320,18 @@ class TestTraceRouter:
         """Test that _get_net_cells only covers actual geometry, not clearance zones.
 
         This prevents same-net routing from crossing nearby different-net pads.
+        Note: Rotated pads are excluded because they use a different calculation
+        that matches the blocking zone (to allow routes to escape the pad).
         """
-        # Find a pad with a net
+        # Find a non-rotated pad with a net
         pad = None
         for p in parser.pads:
-            if "F.Cu" in p.layers and p.net_id > 0:
+            if "F.Cu" in p.layers and p.net_id > 0 and p.angle == 0:
                 pad = p
                 break
 
         if pad is None:
-            pytest.skip("No pads with net on F.Cu")
+            pytest.skip("No non-rotated pads with net on F.Cu")
 
         # Get allowed cells for this net
         allowed_cells = router._get_net_cells("F.Cu", pad.net_id)
@@ -454,6 +456,60 @@ class TestTraceRouter:
 
         assert (net2_gx, net2_gy) not in allowed_cells, (
             "Different net pad should not be in allowed cells"
+        )
+
+    def test_cannot_route_to_different_net_pad(self, parser):
+        """Test that routing to a pad on a different net is rejected.
+
+        Regression test: Previously, the A* algorithm allowed reaching any goal
+        cell even if blocked, which meant routes could end on different-net pads.
+        The API should now reject such routes with an error message.
+        """
+        # Find two pads on same layer with different nets
+        pad1 = None
+        pad2 = None
+
+        for p in parser.pads:
+            if "F.Cu" not in p.layers or p.net_id <= 0:
+                continue
+            if pad1 is None:
+                pad1 = p
+            elif p.net_id != pad1.net_id:
+                pad2 = p
+                break
+
+        if pad1 is None or pad2 is None:
+            pytest.skip("Need at least 2 pads with different nets")
+
+        # Import here to avoid circular imports
+        from backend.main import route_trace, RouteRequest
+        import asyncio
+
+        # Create route request from pad1 to pad2 (different nets)
+        request = RouteRequest(
+            start_x=pad1.x,
+            start_y=pad1.y,
+            end_x=pad2.x,
+            end_y=pad2.y,
+            layer="F.Cu",
+            width=0.25,
+            net_id=pad1.net_id
+        )
+
+        # Call the API endpoint (create new event loop for test)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            response = loop.run_until_complete(route_trace(request))
+        finally:
+            loop.close()
+
+        # Should fail with a message about different nets
+        assert response.success is False, (
+            "Route to different-net pad should be rejected"
+        )
+        assert "different net" in response.message.lower(), (
+            f"Error message should mention different net, got: {response.message}"
         )
 
     def test_find_net_at_point(self, router, parser):
