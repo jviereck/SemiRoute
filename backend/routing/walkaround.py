@@ -109,7 +109,7 @@ class WalkaroundRouter:
             ccw_path = self._walk_hull(hull.hull, entry_point, entry_edge, end, clockwise=False, net_id=net_id)
 
             # Pick the shorter valid path
-            best_path = self._choose_best_path(cw_path, ccw_path, end)
+            best_path = self._choose_best_path(cw_path, ccw_path, end, net_id)
 
             if best_path is None or len(best_path) == 0:
                 # Neither direction worked
@@ -182,9 +182,10 @@ class WalkaroundRouter:
             current_vertex = (entry_edge + 1) % n  # End vertex of entry edge
             step = 1
 
-        # Add offset point near entry
+        # Add offset point near entry (only if not inside another hull)
         offset_pt = self._offset_from_hull(entry_point, hull, entry_edge)
-        path.append(offset_pt)
+        if not self.hull_map.point_inside_any_hull(offset_pt, net_id):
+            path.append(offset_pt)
 
         visited_vertices: set[int] = set()
         max_vertices = n + 2  # Allow slightly more than full loop
@@ -196,11 +197,14 @@ class WalkaroundRouter:
 
             vertex = hull.points[current_vertex]
             offset_vertex = self._offset_vertex(vertex, hull, current_vertex)
-            path.append(offset_vertex)
 
-            # Check if we can reach the goal from this vertex
-            if self._can_reach(offset_vertex, goal, net_id):
-                return path
+            # Only add vertex if it's not inside another hull
+            if not self.hull_map.point_inside_any_hull(offset_vertex, net_id):
+                path.append(offset_vertex)
+
+                # Check if we can reach the goal from this vertex
+                if self._can_reach(offset_vertex, goal, net_id):
+                    return path
 
             # Move to next vertex
             current_vertex = (current_vertex + step) % n
@@ -276,12 +280,15 @@ class WalkaroundRouter:
         self,
         cw_path: list[Point],
         ccw_path: list[Point],
-        goal: Point
+        goal: Point,
+        net_id: Optional[int] = None
     ) -> Optional[list[Point]]:
         """
         Choose the better of two walkaround paths.
 
-        Prefers the shorter path that ends closer to the goal.
+        For each path, finds the point that makes the most progress toward
+        the goal and truncates the path there. Then chooses the shorter
+        of the two truncated paths.
         """
         cw_valid = len(cw_path) > 0
         ccw_valid = len(ccw_path) > 0
@@ -289,21 +296,61 @@ class WalkaroundRouter:
         if not cw_valid and not ccw_valid:
             return None
 
-        if not cw_valid:
-            return ccw_path
+        # Truncate each path to the best exit point
+        cw_truncated = self._truncate_to_best_point(cw_path, goal, net_id) if cw_valid else []
+        ccw_truncated = self._truncate_to_best_point(ccw_path, goal, net_id) if ccw_valid else []
 
-        if not ccw_valid:
-            return cw_path
+        if not cw_truncated and not ccw_truncated:
+            # Fall back to original paths if truncation failed
+            if not cw_valid:
+                return ccw_path
+            if not ccw_valid:
+                return cw_path
+            # Return shorter original path
+            return cw_path if len(cw_path) <= len(ccw_path) else ccw_path
 
-        # Both valid - compare path lengths
-        cw_len = self._path_length(cw_path)
-        ccw_len = self._path_length(ccw_path)
+        if not cw_truncated:
+            return ccw_truncated
 
-        # Add distance to goal from path end
-        cw_total = cw_len + cw_path[-1].distance_to(goal)
-        ccw_total = ccw_len + ccw_path[-1].distance_to(goal)
+        if not ccw_truncated:
+            return cw_truncated
 
-        return cw_path if cw_total <= ccw_total else ccw_path
+        # Both valid - compare total path lengths including distance to goal
+        cw_len = self._path_length(cw_truncated) + cw_truncated[-1].distance_to(goal)
+        ccw_len = self._path_length(ccw_truncated) + ccw_truncated[-1].distance_to(goal)
+
+        return cw_truncated if cw_len <= ccw_len else ccw_truncated
+
+    def _truncate_to_best_point(
+        self,
+        path: list[Point],
+        goal: Point,
+        net_id: Optional[int] = None
+    ) -> list[Point]:
+        """
+        Truncate path to the best exit point.
+
+        Prefers points that can directly reach the goal. If none can,
+        falls back to the point closest to the goal.
+        """
+        if not path:
+            return []
+
+        # First, find points that can reach the goal directly
+        reachable_indices = []
+        for i, pt in enumerate(path):
+            if self._can_reach(pt, goal, net_id):
+                reachable_indices.append(i)
+
+        if reachable_indices:
+            # Use the first point that can reach the goal
+            # (earlier in the walkaround = shorter path)
+            best_idx = reachable_indices[0]
+            return path[:best_idx + 1]
+
+        # No point can reach the goal directly - use the last point
+        # (the full walkaround path) as it's likely to make the most progress
+        return path
 
     def _path_length(self, path: list[Point]) -> float:
         """Calculate total length of a path."""

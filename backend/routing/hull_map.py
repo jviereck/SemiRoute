@@ -155,9 +155,9 @@ class HullMap:
             # Note: rotation already accounted for in dimension swap,
             # so no need to rotate the chain
         elif pad.angle != 0:
-            # Rotated rectangle
+            # Rotated rectangle - use original dimensions, rotation handled by the function
             chain = HullGenerator.rotated_rect_hull(
-                center, half_w, half_h, pad.angle, self.clearance
+                center, pad.width / 2, pad.height / 2, pad.angle, self.clearance
             )
         else:
             # Axis-aligned rectangle (or roundrect)
@@ -353,6 +353,10 @@ class HullMap:
         """
         Get all hulls that actually block a segment, sorted by distance.
 
+        A hull blocks a segment if:
+        1. The segment intersects the hull, OR
+        2. The segment passes within trace_width/2 of the hull boundary
+
         Args:
             start, end: Segment endpoints
             trace_width: Width of the trace being routed
@@ -362,14 +366,23 @@ class HullMap:
             List of (hull, intersection_point, edge_index) sorted by distance from start
         """
         blocking = []
+        half_width = trace_width / 2
 
         for indexed in self.query_segment(start, end, trace_width, net_id):
+            # Check for intersection first
             intersections = indexed.hull.intersects_segment(start, end)
             if intersections:
                 # Use the first (closest) intersection
                 pt, edge_idx = intersections[0]
                 dist_sq = (pt.x - start.x) ** 2 + (pt.y - start.y) ** 2
                 blocking.append((indexed, pt, edge_idx, dist_sq))
+            else:
+                # No intersection - check if segment passes too close
+                dist, closest_pt, edge_idx = indexed.hull.segment_to_boundary_distance(start, end)
+                if dist < half_width:
+                    # Segment is too close - treat the closest point as the blocking point
+                    dist_sq = (closest_pt.x - start.x) ** 2 + (closest_pt.y - start.y) ** 2
+                    blocking.append((indexed, closest_pt, edge_idx, dist_sq))
 
         # Sort by distance
         blocking.sort(key=lambda x: x[3])
