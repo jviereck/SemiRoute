@@ -163,7 +163,8 @@ class SVGGenerator:
             .clearance-fill { fill: #FF6600; fill-opacity: 0.15; stroke: none; }
             .label-text { font-family: monospace; pointer-events: none; }
             .component-label { font-size: 0.6px; fill: #FFFF00; font-weight: bold; }
-            .pad-label { font-size: 0.35px; fill: #FFFFFF; }
+            .pad-label { fill: #FFFFFF; }
+            .net-label { fill: #AAAAFF; }
         """
 
     def _add_layer_graphics(self, group: Element, layer: str) -> None:
@@ -333,29 +334,122 @@ class SVGGenerator:
 
         group.append(elem)
 
+    def _normalize_label_angle(self, angle: float) -> float:
+        """Normalize angle to 0-90 range for readable text orientation."""
+        # Normalize to [0, 360)
+        angle = angle % 360
+        # Keep text readable: if angle would make text upside-down, flip it
+        if angle > 90 and angle <= 270:
+            angle -= 180
+        elif angle > 270:
+            angle -= 360
+        return angle
+
+    def _calc_text_width(self, text: str, font_size: float) -> float:
+        """Estimate text width for monospace font (approx 0.3 * font_size per char)."""
+        return len(text) * font_size * 0.3
+
     def _add_labels(self, group: Element) -> None:
         """Add component reference and pad labels."""
         # Add component reference labels
         for fp in self.parser.footprints:
             if fp.reference:
-                elem = Element("text", {
+                attrs = {
                     "x": f"{fp.x:.4f}",
                     "y": f"{fp.y:.4f}",
                     "class": "label-text component-label",
                     "text-anchor": "middle",
                     "dominant-baseline": "middle",
-                })
+                }
+                # Rotate component label (normalized to readable range)
+                norm_angle = self._normalize_label_angle(fp.angle)
+                if norm_angle != 0:
+                    attrs["transform"] = f"rotate({norm_angle:.2f}, {fp.x:.4f}, {fp.y:.4f})"
+                elem = Element("text", attrs)
                 elem.text = fp.reference
                 group.append(elem)
 
-        # Add pad labels
+        # Add pad labels (pin number + net name, oriented with pad)
+        base_pin_font = 0.35  # Base font size for pin number
+        base_net_font = 0.25  # Base font size for net name
+        min_font_size = 0.01  # Minimum font size (text may be very small on tiny pads)
+
         for pad in self.parser.pads:
-            elem = Element("text", {
+            import math
+
+            # Orient text along the longest pad dimension
+            # If height > width, rotate text 90° to run along height
+            text_angle = pad.angle
+            if pad.height > pad.width:
+                text_angle += 90
+
+            # Normalize rotation angle to readable range (0-90 degrees)
+            norm_angle = self._normalize_label_angle(text_angle)
+
+            # Available space: use larger dimension for width, smaller for height
+            available_width = max(pad.width, pad.height) * 0.9
+            available_height = min(pad.width, pad.height) * 0.9
+
+            # Character width factor for monospace in SVG coordinates
+            # Empirically tuned based on actual rendering
+            char_width_factor = 0.3
+
+            # Calculate font sizes that fit
+            pin_text = pad.name
+            pin_font = base_pin_font
+            pin_text_width = self._calc_text_width(pin_text, pin_font)
+            if pin_text_width > available_width:
+                pin_font = max(min_font_size, available_width / (len(pin_text) * char_width_factor))
+
+            net_font = base_net_font
+            if pad.net_name:
+                net_text_width = self._calc_text_width(pad.net_name, net_font)
+                if net_text_width > available_width:
+                    net_font = max(min_font_size, available_width / (len(pad.net_name) * char_width_factor))
+
+            # Check if both lines fit vertically (pin + net + spacing)
+            total_height = pin_font + (net_font if pad.net_name else 0) + 0.1
+            if total_height > available_height:
+                scale = available_height / total_height
+                pin_font = max(min_font_size, pin_font * scale)
+                net_font = max(min_font_size, net_font * scale)
+
+            # Build text element
+            attrs = {
                 "x": f"{pad.x:.4f}",
                 "y": f"{pad.y:.4f}",
                 "class": "label-text pad-label",
                 "text-anchor": "middle",
                 "dominant-baseline": "middle",
+            }
+            if norm_angle != 0:
+                attrs["transform"] = f"rotate({norm_angle:.2f}, {pad.x:.4f}, {pad.y:.4f})"
+            elem = Element("text", attrs)
+
+            # Vertical offset for centering both lines
+            if pad.net_name:
+                pin_dy = -pin_font * 0.5
+                net_dy = pin_font * 0.5 + net_font * 0.5
+            else:
+                pin_dy = 0
+                net_dy = 0
+
+            # Pin number (use style attribute for higher CSS specificity)
+            tspan_pin = SubElement(elem, "tspan", {
+                "x": f"{pad.x:.4f}",
+                "dy": f"{pin_dy:.4f}",
+                "style": f"font-size: {pin_font:.4f}px",
             })
-            elem.text = pad.name
+            tspan_pin.text = pin_text
+
+            # Net name (if available)
+            if pad.net_name:
+                tspan_net = SubElement(elem, "tspan", {
+                    "x": f"{pad.x:.4f}",
+                    "dy": f"{net_dy:.4f}",
+                    "class": "net-label",
+                    "style": f"font-size: {net_font:.4f}px",
+                })
+                tspan_net.text = pad.net_name
+
             group.append(elem)

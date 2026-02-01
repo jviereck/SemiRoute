@@ -1,6 +1,6 @@
 """Accurate geometry calculations for PCB elements."""
 import math
-from typing import Union
+from typing import Union, Optional
 
 from backend.pcb.models import PadInfo, TraceInfo, ViaInfo
 
@@ -176,3 +176,192 @@ class GeometryChecker:
         closest_y = y1 + t * dy
 
         return math.sqrt((px - closest_x) ** 2 + (py - closest_y) ** 2)
+
+
+def segment_segment_intersection(
+    p1x: float, p1y: float,
+    p2x: float, p2y: float,
+    p3x: float, p3y: float,
+    p4x: float, p4y: float,
+    epsilon: float = 1e-10
+) -> Optional[tuple[float, float]]:
+    """
+    Find intersection point of two line segments.
+
+    Args:
+        p1x, p1y, p2x, p2y: First segment endpoints
+        p3x, p3y, p4x, p4y: Second segment endpoints
+        epsilon: Tolerance for parallel/coincident detection
+
+    Returns:
+        (x, y) intersection point or None if segments don't intersect
+    """
+    # Direction vectors
+    d1x = p2x - p1x
+    d1y = p2y - p1y
+    d2x = p4x - p3x
+    d2y = p4y - p3y
+    d3x = p3x - p1x
+    d3y = p3y - p1y
+
+    # Cross product of directions
+    cross = d1x * d2y - d1y * d2x
+
+    # Check if segments are parallel
+    if abs(cross) < epsilon:
+        return None
+
+    # Calculate intersection parameters
+    t = (d3x * d2y - d3y * d2x) / cross
+    u = (d3x * d1y - d3y * d1x) / cross
+
+    # Check if intersection is within both segments
+    if 0 <= t <= 1 and 0 <= u <= 1:
+        return (p1x + d1x * t, p1y + d1y * t)
+
+    return None
+
+
+def segment_polyline_intersections(
+    p1x: float, p1y: float,
+    p2x: float, p2y: float,
+    polyline: list[tuple[float, float]],
+    closed: bool = True
+) -> list[tuple[float, float, int, float]]:
+    """
+    Find all intersection points between a line segment and a polyline.
+
+    Args:
+        p1x, p1y, p2x, p2y: Query segment endpoints
+        polyline: List of (x, y) vertices
+        closed: If True, connect last vertex to first
+
+    Returns:
+        List of (x, y, edge_index, t_along_query) sorted by distance from p1.
+        edge_index is the polyline edge that was intersected.
+        t_along_query is the parameter [0,1] along the query segment.
+    """
+    intersections = []
+    n = len(polyline)
+
+    if n < 2:
+        return intersections
+
+    num_edges = n if closed else n - 1
+
+    for i in range(num_edges):
+        e1 = polyline[i]
+        e2 = polyline[(i + 1) % n]
+
+        pt = segment_segment_intersection(
+            p1x, p1y, p2x, p2y,
+            e1[0], e1[1], e2[0], e2[1]
+        )
+        if pt is not None:
+            # Calculate t along query segment
+            dx = p2x - p1x
+            dy = p2y - p1y
+            length_sq = dx * dx + dy * dy
+            if length_sq > 1e-10:
+                t = ((pt[0] - p1x) * dx + (pt[1] - p1y) * dy) / length_sq
+            else:
+                t = 0.0
+            intersections.append((pt[0], pt[1], i, t))
+
+    # Sort by t (distance along query segment)
+    intersections.sort(key=lambda x: x[3])
+    return intersections
+
+
+def line_side(
+    px: float, py: float,
+    l1x: float, l1y: float,
+    l2x: float, l2y: float
+) -> float:
+    """
+    Determine which side of a line a point is on.
+
+    Returns:
+        > 0 if point is to the left of line (l1 -> l2)
+        < 0 if point is to the right
+        = 0 if point is on the line
+    """
+    return (l2x - l1x) * (py - l1y) - (l2y - l1y) * (px - l1x)
+
+
+def segments_intersect(
+    p1x: float, p1y: float,
+    p2x: float, p2y: float,
+    p3x: float, p3y: float,
+    p4x: float, p4y: float
+) -> bool:
+    """
+    Check if two line segments intersect (boolean only, faster).
+
+    Args:
+        p1x, p1y, p2x, p2y: First segment endpoints
+        p3x, p3y, p4x, p4y: Second segment endpoints
+
+    Returns:
+        True if segments intersect
+    """
+    # Check bounding box overlap first (fast rejection)
+    if (max(p1x, p2x) < min(p3x, p4x) or max(p3x, p4x) < min(p1x, p2x) or
+        max(p1y, p2y) < min(p3y, p4y) or max(p3y, p4y) < min(p1y, p2y)):
+        return False
+
+    # Cross product test
+    d1 = line_side(p3x, p3y, p1x, p1y, p2x, p2y)
+    d2 = line_side(p4x, p4y, p1x, p1y, p2x, p2y)
+    d3 = line_side(p1x, p1y, p3x, p3y, p4x, p4y)
+    d4 = line_side(p2x, p2y, p3x, p3y, p4x, p4y)
+
+    if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and \
+       ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)):
+        return True
+
+    # Check for collinear cases
+    if d1 == 0 and on_segment(p3x, p3y, p1x, p1y, p2x, p2y):
+        return True
+    if d2 == 0 and on_segment(p4x, p4y, p1x, p1y, p2x, p2y):
+        return True
+    if d3 == 0 and on_segment(p1x, p1y, p3x, p3y, p4x, p4y):
+        return True
+    if d4 == 0 and on_segment(p2x, p2y, p3x, p3y, p4x, p4y):
+        return True
+
+    return False
+
+
+def on_segment(
+    px: float, py: float,
+    ax: float, ay: float,
+    bx: float, by: float
+) -> bool:
+    """Check if point p lies on segment ab (assuming collinearity)."""
+    return (min(ax, bx) <= px <= max(ax, bx) and
+            min(ay, by) <= py <= max(ay, by))
+
+
+def closest_point_on_segment(
+    px: float, py: float,
+    ax: float, ay: float,
+    bx: float, by: float
+) -> tuple[float, float, float]:
+    """
+    Find closest point on segment ab to point p.
+
+    Returns:
+        (x, y, t) where (x, y) is the closest point and t is parameter [0, 1]
+    """
+    dx = bx - ax
+    dy = by - ay
+    length_sq = dx * dx + dy * dy
+
+    if length_sq < 1e-10:
+        return (ax, ay, 0.0)
+
+    t = ((px - ax) * dx + (py - ay) * dy) / length_sq
+    t = max(0.0, min(1.0, t))
+
+    return (ax + dx * t, ay + dy * t, t)

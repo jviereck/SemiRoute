@@ -1,4 +1,4 @@
-"""Main trace router using A* pathfinding."""
+"""Main trace router using A* pathfinding and hull-based walkaround."""
 from pathlib import Path
 from typing import Optional
 
@@ -7,14 +7,21 @@ from backend.pcb.parser import PCBParser
 from .obstacles import ObstacleMap, ElementAwareMap
 from .pathfinding import astar_search, astar_search_element_aware
 from .pending import PendingTraceStore
+from .hull_map import HullMap
+from .walkaround import WalkaroundRouter
+from .optimizer import PathOptimizer
+from .hulls import Point
 
 
 class TraceRouter:
     """
     Router for creating traces between points on a PCB.
 
-    Uses A* pathfinding with 8-direction movement (0°, 45°, 90°, etc.)
-    to find paths that avoid obstacles while respecting clearances.
+    Supports two routing modes:
+    - Hull-based walkaround (default): Continuous geometry with octagonal hulls
+    - A* pathfinding (legacy): Grid-based with 8-direction movement
+
+    The hull-based mode produces smoother paths with tighter clearances.
     """
 
     # Copper layers to cache
@@ -27,7 +34,8 @@ class TraceRouter:
         grid_resolution: float = 0.025,
         cache_obstacles: bool = False,
         pending_traces_file: Optional[Path] = None,
-        use_element_aware: bool = True
+        use_element_aware: bool = True,
+        use_legacy_astar: bool = False
     ):
         """
         Initialize the router.
@@ -35,21 +43,26 @@ class TraceRouter:
         Args:
             parser: Parsed PCB data
             clearance: Minimum clearance to obstacles (mm)
-            grid_resolution: Routing grid cell size (mm)
+            grid_resolution: Routing grid cell size (mm) - used for A* fallback
             cache_obstacles: Whether to cache obstacle maps at startup
             pending_traces_file: Optional path to JSON file for trace persistence
-            use_element_aware: Use element-aware pathfinding with exact geometry
+            use_element_aware: Use element-aware pathfinding with exact geometry (A* mode)
+            use_legacy_astar: If True, use legacy A* routing instead of hull-based
         """
         self.parser = parser
         self.clearance = clearance
         self.grid_resolution = grid_resolution
         self.use_element_aware = use_element_aware
+        self.use_legacy_astar = use_legacy_astar
 
-        # Cache obstacle maps per layer (legacy)
+        # Cache obstacle maps per layer (legacy A*)
         self._obstacle_cache: dict[str, ObstacleMap] = {}
 
-        # Cache element-aware maps per layer (new)
+        # Cache element-aware maps per layer (element-aware A*)
         self._element_aware_cache: dict[str, ElementAwareMap] = {}
+
+        # Cache hull maps per layer (hull-based walkaround)
+        self._hull_map_cache: dict[str, HullMap] = {}
 
         # Store for pending user-created traces
         self.pending_store = PendingTraceStore(
@@ -58,10 +71,13 @@ class TraceRouter:
         )
 
         if cache_obstacles:
-            if use_element_aware:
-                self._build_element_aware_cache()
+            if use_legacy_astar:
+                if use_element_aware:
+                    self._build_element_aware_cache()
+                else:
+                    self._build_obstacle_cache()
             else:
-                self._build_obstacle_cache()
+                self._build_hull_map_cache()
 
     def _build_obstacle_cache(self) -> None:
         """Pre-build obstacle maps for all copper layers."""
@@ -83,6 +99,25 @@ class TraceRouter:
                 clearance=self.clearance,
                 grid_resolution=self.grid_resolution
             )
+
+    def _build_hull_map_cache(self) -> None:
+        """Pre-build hull maps for all copper layers."""
+        for layer in self.COPPER_LAYERS:
+            self._hull_map_cache[layer] = HullMap(
+                parser=self.parser,
+                layer=layer,
+                clearance=self.clearance
+            )
+
+    def _get_hull_map(self, layer: str) -> HullMap:
+        """Get hull map for a layer, building if not cached."""
+        if layer not in self._hull_map_cache:
+            self._hull_map_cache[layer] = HullMap(
+                parser=self.parser,
+                layer=layer,
+                clearance=self.clearance
+            )
+        return self._hull_map_cache[layer]
 
     def _get_obstacle_map(self, layer: str, net_id: Optional[int]) -> ObstacleMap:
         """Get obstacle map, using cache if available."""
@@ -140,14 +175,72 @@ class TraceRouter:
             List of (x, y) waypoints defining the trace path.
             Returns empty list if no valid route found.
         """
-        if self.use_element_aware:
+        if self.use_legacy_astar:
+            # Use legacy A* pathfinding
+            if self.use_element_aware:
+                return self._route_element_aware(
+                    start_x, start_y, end_x, end_y, layer, width, net_id
+                )
+            else:
+                return self._route_legacy(
+                    start_x, start_y, end_x, end_y, layer, width, net_id
+                )
+        else:
+            # Use hull-based walkaround routing (default)
+            return self._route_walkaround(
+                start_x, start_y, end_x, end_y, layer, width, net_id
+            )
+
+    def _route_walkaround(
+        self,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+        layer: str,
+        width: float,
+        net_id: Optional[int] = None
+    ) -> list[tuple[float, float]]:
+        """
+        Route using hull-based walkaround algorithm.
+
+        Produces smoother paths by following hull boundaries instead of
+        grid-based pathfinding.
+        """
+        hull_map = self._get_hull_map(layer)
+
+        # Create walkaround router
+        router = WalkaroundRouter(
+            hull_map=hull_map,
+            trace_width=width,
+            max_iterations=1000,
+            corner_offset=0.05
+        )
+
+        # Perform routing
+        result = router.route(
+            Point(start_x, start_y),
+            Point(end_x, end_y),
+            net_id=net_id
+        )
+
+        if not result.success:
+            # Fall back to A* if walkaround fails
             return self._route_element_aware(
                 start_x, start_y, end_x, end_y, layer, width, net_id
             )
-        else:
-            return self._route_legacy(
-                start_x, start_y, end_x, end_y, layer, width, net_id
-            )
+
+        # Convert path to tuples
+        path = [p.to_tuple() for p in result.path]
+
+        # Optimize the path
+        optimizer = PathOptimizer(
+            hull_map=hull_map,
+            trace_width=width
+        )
+        path = optimizer.optimize(path, net_id)
+
+        return path
 
     def _route_element_aware(
         self,
