@@ -329,7 +329,7 @@ async def list_traces():
                 "layer": t.layer,
                 "width": t.width,
                 "net_id": t.net_id,
-                "segment_count": len(t.segments)
+                "segments": [[p[0], p[1]] for p in t.segments]
             }
             for t in traces
         ]

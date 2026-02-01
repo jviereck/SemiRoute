@@ -546,6 +546,81 @@
         setupPadClickHandler();
         setupKeyboardShortcuts();
         setupTraceModeControls();
+
+        // Load any persisted pending traces
+        await loadPendingTraces();
+    }
+
+    /**
+     * Load pending traces from the backend and render them.
+     */
+    async function loadPendingTraces() {
+        try {
+            const response = await fetch('/api/traces');
+            const data = await response.json();
+
+            if (!data.traces || data.traces.length === 0) {
+                return;
+            }
+
+            // Group traces by route ID (strip segment suffix like "-seg0")
+            const routeGroups = new Map();
+            for (const trace of data.traces) {
+                // Extract base route ID (e.g., "route-1-seg0" -> "route-1")
+                const match = trace.id.match(/^(route-\d+)/);
+                const baseRouteId = match ? match[1] : trace.id;
+
+                if (!routeGroups.has(baseRouteId)) {
+                    routeGroups.set(baseRouteId, {
+                        id: baseRouteId,
+                        netId: trace.net_id,
+                        segments: [],
+                        visible: true
+                    });
+                }
+
+                const route = routeGroups.get(baseRouteId);
+                route.segments.push({
+                    path: trace.segments,
+                    layer: trace.layer,
+                    width: trace.width,
+                    backendId: trace.id  // Keep track of backend ID for deletion
+                });
+            }
+
+            // Add each route to userRoutes and render
+            for (const [routeId, route] of routeGroups) {
+                // Extract route number to update nextRouteId
+                const numMatch = routeId.match(/route-(\d+)/);
+                if (numMatch) {
+                    const num = parseInt(numMatch[1], 10);
+                    if (num >= nextRouteId) {
+                        nextRouteId = num + 1;
+                    }
+                }
+
+                userRoutes.push(route);
+
+                // Render each segment
+                route.segments.forEach((seg, idx) => {
+                    viewer.addCommittedSegment(
+                        seg.path,
+                        seg.width,
+                        seg.layer,
+                        route.id,
+                        idx,
+                        route.netId
+                    );
+                });
+
+                // Add to UI list
+                addRouteToList(route);
+            }
+
+            console.log(`Loaded ${routeGroups.size} pending routes from backend`);
+        } catch (error) {
+            console.error('Failed to load pending traces:', error);
+        }
     }
 
     /**
