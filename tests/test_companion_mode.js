@@ -285,12 +285,12 @@ async function runTests() {
 
         await page.screenshot({ path: `${SCREENSHOT_DIR}/companion_added.png`, fullPage: true });
 
-        // ========== TEST 6: Alt+Click on non-pad shows error ==========
-        log('\n--- Test 6: Alt+Click on Non-Pad Shows Error ---');
+        // ========== TEST 6: Alt+Click on empty space shows error ==========
+        log('\n--- Test 6: Alt+Click on Empty Space Shows Error ---');
 
-        // Alt+Click on empty space
+        // Alt+Click on empty space (no element with a net)
         await page.keyboard.down('Alt');
-        await page.mouse.click(800, 400);  // Somewhere in the viewer
+        await page.mouse.click(350, 100);  // Top-left corner with no elements
         await page.keyboard.up('Alt');
         await sleep(300);
 
@@ -302,10 +302,10 @@ async function runTests() {
             };
         });
 
-        if (errorShown.visible && errorShown.text.includes('pad')) {
-            pass('Error shown for Alt+Click on non-pad');
+        if (errorShown.visible && errorShown.text.includes('companion')) {
+            pass('Error shown for Alt+Click on empty space');
         } else {
-            fail('Error shown for Alt+Click on non-pad', `visible=${errorShown.visible}, text="${errorShown.text}"`);
+            fail('Error shown for Alt+Click on empty space', `visible=${errorShown.visible}, text="${errorShown.text}"`);
         }
 
         // Verify no new routing session started
@@ -315,9 +315,9 @@ async function runTests() {
         });
 
         if (noNewSession) {
-            pass('No routing session started after Alt+Click on non-pad');
+            pass('No routing session started after Alt+Click on empty space');
         } else {
-            fail('No routing session started after Alt+Click on non-pad');
+            fail('No routing session started after Alt+Click on empty space');
         }
 
         // ========== TEST 7: Mouse move shows companion preview ==========

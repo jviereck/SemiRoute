@@ -977,16 +977,19 @@
         const target = getTargetCoordinates(e, clickedElement);
         const match = findBestMatchAtPoint(e.clientX, e.clientY);
 
-        // Handle companion mode: Alt+Click on pad adds companion
+        // Handle companion mode: Alt+Click on pad/via/trace adds companion
         if (e.altKey && companionMode && companionMode.referenceRoute) {
-            if (clickedElement && clickedElement.classList.contains('pad')) {
-                addCompanionTrace(clickedElement);
-                return;
-            } else {
-                // Alt+Click on non-pad in companion mode - ignore (don't start new routing)
-                showTraceError('Alt+Click on a pad to add a companion');
-                return;
+            if (match && (match.type === 'pad' || match.type === 'via' || match.type === 'trace' ||
+                          match.type === 'user-trace' || match.type === 'user-via')) {
+                const netId = parseInt(match.element.dataset.net, 10);
+                if (netId > 0) {
+                    addCompanionTrace(match.element, target);
+                    return;
+                }
             }
+            // Alt+Click on element without net - show error
+            showTraceError('Alt+Click on a pad, via, or trace to add a companion');
+            return;
         }
 
         // Handle companion mode: regular click commits segments
@@ -1426,14 +1429,15 @@
         }
 
         updateCompanionStatus();
-        updateTraceStatus('Reference selected. Alt+Click pads to add companions', 'routing');
+        updateTraceStatus('Reference selected. Alt+Click pad/via/trace to add companions', 'routing');
     }
 
     /**
-     * Add a companion trace from a clicked pad.
-     * @param {Element} clickedElement - The pad element that was Alt+clicked
+     * Add a companion trace from a clicked element (pad, via, or trace).
+     * @param {Element} clickedElement - The element that was Alt+clicked
+     * @param {Object} clickTarget - The click target coordinates {x, y}
      */
-    function addCompanionTrace(clickedElement) {
+    function addCompanionTrace(clickedElement, clickTarget) {
         if (!companionMode) return;
 
         const netId = parseInt(clickedElement.dataset.net, 10);
@@ -1450,20 +1454,26 @@
             return;
         }
 
-        // Get pad coordinates
-        const padX = parseFloat(clickedElement.dataset.x || clickedElement.getAttribute('cx'));
-        const padY = parseFloat(clickedElement.dataset.y || clickedElement.getAttribute('cy'));
+        // Get coordinates - try element attributes first, then use click position
+        let startX = parseFloat(clickedElement.dataset.x || clickedElement.getAttribute('cx'));
+        let startY = parseFloat(clickedElement.dataset.y || clickedElement.getAttribute('cy'));
 
-        if (isNaN(padX) || isNaN(padY)) {
-            showTraceError('Could not determine pad position');
-            return;
+        // For traces or if element coords unavailable, use click target position
+        if (isNaN(startX) || isNaN(startY)) {
+            if (clickTarget) {
+                startX = clickTarget.x;
+                startY = clickTarget.y;
+            } else {
+                showTraceError('Could not determine start position');
+                return;
+            }
         }
 
         const width = parseFloat(document.getElementById('trace-width').value);
 
         companionMode.companions.push({
             netId: netId,
-            startPoint: { x: padX, y: padY },
+            startPoint: { x: startX, y: startY },
             offsetIndex: companionMode.companions.length + 1,  // 1-based
             currentSegmentIndex: 0,
             pendingPath: null,
@@ -1475,7 +1485,7 @@
         });
 
         // Show start marker for this companion
-        viewer.showCompanionStartMarker(padX, padY, companionMode.companions.length);
+        viewer.showCompanionStartMarker(startX, startY, companionMode.companions.length);
 
         updateCompanionStatus();
         hideTraceError();
