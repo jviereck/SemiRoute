@@ -78,6 +78,10 @@ class TraceRouter:
                     self._build_obstacle_cache()
             else:
                 self._build_hull_map_cache()
+                # Also build element-aware cache since get_obstacle_map uses it
+                # for is_blocked checks even in hull-based mode
+                if use_element_aware:
+                    self._build_element_aware_cache()
 
     def _build_obstacle_cache(self) -> None:
         """Pre-build obstacle maps for all copper layers."""
