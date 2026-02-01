@@ -26,7 +26,7 @@ class TraceRouter:
         clearance: float = 0.2,
         grid_resolution: float = 0.025,
         cache_obstacles: bool = False,
-        pending_traces_file: Optional[Path] = None
+        pending_traces_file: Optional[Path] = None,
         use_element_aware: bool = True
     ):
         """
