@@ -4,8 +4,8 @@ from typing import Optional
 
 from backend.pcb.parser import PCBParser
 
-from .obstacles import ObstacleMap
-from .pathfinding import astar_search
+from .obstacles import ObstacleMap, ElementAwareMap
+from .pathfinding import astar_search, astar_search_element_aware
 from .pending import PendingTraceStore
 
 
@@ -27,6 +27,7 @@ class TraceRouter:
         grid_resolution: float = 0.025,
         cache_obstacles: bool = False,
         pending_traces_file: Optional[Path] = None
+        use_element_aware: bool = True
     ):
         """
         Initialize the router.
@@ -37,13 +38,18 @@ class TraceRouter:
             grid_resolution: Routing grid cell size (mm)
             cache_obstacles: Whether to cache obstacle maps at startup
             pending_traces_file: Optional path to JSON file for trace persistence
+            use_element_aware: Use element-aware pathfinding with exact geometry
         """
         self.parser = parser
         self.clearance = clearance
         self.grid_resolution = grid_resolution
+        self.use_element_aware = use_element_aware
 
-        # Cache obstacle maps per layer
+        # Cache obstacle maps per layer (legacy)
         self._obstacle_cache: dict[str, ObstacleMap] = {}
+
+        # Cache element-aware maps per layer (new)
+        self._element_aware_cache: dict[str, ElementAwareMap] = {}
 
         # Store for pending user-created traces
         self.pending_store = PendingTraceStore(
@@ -52,7 +58,10 @@ class TraceRouter:
         )
 
         if cache_obstacles:
-            self._build_obstacle_cache()
+            if use_element_aware:
+                self._build_element_aware_cache()
+            else:
+                self._build_obstacle_cache()
 
     def _build_obstacle_cache(self) -> None:
         """Pre-build obstacle maps for all copper layers."""
@@ -63,6 +72,16 @@ class TraceRouter:
                 clearance=self.clearance,
                 grid_resolution=self.grid_resolution,
                 allowed_net_id=None  # Block everything
+            )
+
+    def _build_element_aware_cache(self) -> None:
+        """Pre-build element-aware maps for all copper layers."""
+        for layer in self.COPPER_LAYERS:
+            self._element_aware_cache[layer] = ElementAwareMap(
+                parser=self.parser,
+                layer=layer,
+                clearance=self.clearance,
+                grid_resolution=self.grid_resolution
             )
 
     def _get_obstacle_map(self, layer: str, net_id: Optional[int]) -> ObstacleMap:
@@ -103,6 +122,62 @@ class TraceRouter:
             List of (x, y) waypoints defining the trace path.
             Returns empty list if no valid route found.
         """
+        if self.use_element_aware:
+            return self._route_element_aware(
+                start_x, start_y, end_x, end_y, layer, width, net_id
+            )
+        else:
+            return self._route_legacy(
+                start_x, start_y, end_x, end_y, layer, width, net_id
+            )
+
+    def _route_element_aware(
+        self,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+        layer: str,
+        width: float,
+        net_id: Optional[int] = None
+    ) -> list[tuple[float, float]]:
+        """Route using element-aware pathfinding with exact geometry."""
+        # Get element-aware map
+        if layer not in self._element_aware_cache:
+            self._element_aware_cache[layer] = ElementAwareMap(
+                parser=self.parser,
+                layer=layer,
+                clearance=self.clearance,
+                grid_resolution=self.grid_resolution
+            )
+
+        obstacle_map = self._element_aware_cache[layer]
+
+        # Get pending traces for this layer (excluding same-net)
+        pending = self.pending_store.get_traces_by_layer(layer)
+        pending_filtered = [t for t in pending
+                           if net_id is None or t.net_id != net_id]
+
+        return astar_search_element_aware(
+            obstacle_map,
+            start_x, start_y,
+            end_x, end_y,
+            trace_radius=width / 2,
+            net_id=net_id,
+            pending_traces=pending_filtered if pending_filtered else None
+        )
+
+    def _route_legacy(
+        self,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+        layer: str,
+        width: float,
+        net_id: Optional[int] = None
+    ) -> list[tuple[float, float]]:
+        """Route using legacy grid-based pathfinding."""
         # Get blocked cells from pending traces (excluding same-net traces)
         pending_blocked = self.pending_store.get_blocked_cells(
             layer, self.clearance, exclude_net_id=net_id
@@ -136,39 +211,85 @@ class TraceRouter:
     def _get_net_cells(self, layer: str, net_id: int) -> set[tuple[int, int]]:
         """Get set of grid cells that belong to a specific net.
 
-        Note: Only includes cells within the actual pad/trace/via geometry,
-        NOT the clearance zone. This prevents allowed regions from extending
-        into areas where other obstacles might be.
+        For rotated pads, the allowed region is expanded to match the blocking
+        radius so routes can escape. However, cells blocked by different-net
+        elements are excluded to prevent clearance violations.
         """
+        import math
         resolution = self.grid_resolution
         cells: set[tuple[int, int]] = set()
 
         def to_grid(x: float, y: float) -> tuple[int, int]:
             return (int(round(x / resolution)), int(round(y / resolution)))
 
-        # Add pad cells (only within pad geometry, no clearance)
+        # Collect cells blocked by DIFFERENT-net pads (to exclude from allowed)
+        different_net_blocked: set[tuple[int, int]] = set()
+        for pad in self.parser.pads:
+            if layer not in pad.layers or pad.net_id == net_id:
+                continue  # Skip same-net or different-layer pads
+
+            gx, gy = to_grid(pad.x, pad.y)
+
+            # Calculate blocking radius (must match ObstacleMap._block_rect)
+            if pad.angle != 0:
+                w = pad.width + 2 * self.clearance
+                h = pad.height + 2 * self.clearance
+                radius = math.sqrt(w * w + h * h) / 2
+            else:
+                # For rectangular pads, use the larger dimension as radius
+                w = pad.width + 2 * self.clearance
+                h = pad.height + 2 * self.clearance
+                radius = max(w, h) / 2
+
+            r = int(radius / resolution) + 1
+            r_sq = r * r
+            for dx in range(-r, r + 1):
+                for dy in range(-r, r + 1):
+                    if dx * dx + dy * dy <= r_sq:
+                        different_net_blocked.add((gx + dx, gy + dy))
+
+        # Add pad cells for this net
         for pad in self.parser.pads:
             if layer not in pad.layers or pad.net_id != net_id:
                 continue
             gx, gy = to_grid(pad.x, pad.y)
 
-            # For rotated pads, use circle with diagonal radius (matches _block_rect)
+            # For rotated pads, use circle with diagonal radius
+            # Strategy: include cells in the expanded region (for escaping),
+            # but exclude any that overlap with different-net blocking zones.
+            # Always keep a minimal core (just the pad center) for reachability.
             if pad.angle != 0:
-                import math
-                diagonal = math.sqrt(pad.width ** 2 + pad.height ** 2)
-                r = int((diagonal / 2) / resolution) + 1
+                # Always include minimal core (pad center +/- 1 cell)
+                for dx in range(-1, 2):
+                    for dy in range(-1, 2):
+                        cells.add((gx + dx, gy + dy))
+
+                # Add expanded region, excluding different-net overlap
+                w = pad.width + 2 * self.clearance
+                h = pad.height + 2 * self.clearance
+                radius = math.sqrt(w * w + h * h) / 2
+                r = int(radius / resolution) + 1
                 r_sq = r * r
                 for dx in range(-r, r + 1):
                     for dy in range(-r, r + 1):
                         if dx * dx + dy * dy <= r_sq:
-                            cells.add((gx + dx, gy + dy))
+                            cell = (gx + dx, gy + dy)
+                            if cell not in different_net_blocked:
+                                cells.add(cell)
             else:
-                # Use rectangular bounds matching pad shape
-                rx = int((pad.width / 2) / resolution) + 1
-                ry = int((pad.height / 2) / resolution) + 1
+                # For non-rotated pads: minimal core + expansion minus overlap
+                for dx in range(-1, 2):
+                    for dy in range(-1, 2):
+                        cells.add((gx + dx, gy + dy))
+
+                # Add clearance expansion, excluding different-net overlap
+                rx = int((pad.width / 2 + self.clearance) / resolution) + 1
+                ry = int((pad.height / 2 + self.clearance) / resolution) + 1
                 for dx in range(-rx, rx + 1):
                     for dy in range(-ry, ry + 1):
-                        cells.add((gx + dx, gy + dy))
+                        cell = (gx + dx, gy + dy)
+                        if cell not in different_net_blocked:
+                            cells.add(cell)
 
         # Add trace cells (only within trace geometry, no clearance)
         for trace in self.parser.get_traces_by_layer(layer):
@@ -228,19 +349,32 @@ class TraceRouter:
             Tuple of (valid, message). If not valid, message explains why.
         """
         for layer in self.COPPER_LAYERS:
-            # Use cached obstacle map
-            if layer in self._obstacle_cache:
-                obstacle_map = self._obstacle_cache[layer]
-                if obstacle_map.is_blocked(x, y, via_radius):
-                    # Check if blocked ONLY by same-net elements
-                    if net_id is not None and self._is_same_net_only(x, y, via_radius, layer, net_id):
-                        continue  # Same-net blocking is OK
+            if self.use_element_aware:
+                # Use element-aware checking with exact geometry
+                if layer not in self._element_aware_cache:
+                    self._element_aware_cache[layer] = ElementAwareMap(
+                        parser=self.parser,
+                        layer=layer,
+                        clearance=self.clearance,
+                        grid_resolution=self.grid_resolution
+                    )
+                obstacle_map = self._element_aware_cache[layer]
+                if obstacle_map.is_blocked(x, y, via_radius, net_id):
                     return (False, f"Clearance violation on {layer}")
             else:
-                # Fall back to building map (shouldn't happen with cache_obstacles=True)
-                obstacle_map = self._get_obstacle_map(layer, net_id)
-                if obstacle_map.is_blocked(x, y, via_radius):
-                    return (False, f"Clearance violation on {layer}")
+                # Use cached obstacle map (legacy)
+                if layer in self._obstacle_cache:
+                    obstacle_map = self._obstacle_cache[layer]
+                    if obstacle_map.is_blocked(x, y, via_radius):
+                        # Check if blocked ONLY by same-net elements
+                        if net_id is not None and self._is_same_net_only(x, y, via_radius, layer, net_id):
+                            continue  # Same-net blocking is OK
+                        return (False, f"Clearance violation on {layer}")
+                else:
+                    # Fall back to building map (shouldn't happen with cache_obstacles=True)
+                    obstacle_map = self._get_obstacle_map(layer, net_id)
+                    if obstacle_map.is_blocked(x, y, via_radius):
+                        return (False, f"Clearance violation on {layer}")
 
         return (True, "")
 
@@ -321,6 +455,8 @@ class TraceRouter:
         """
         Find the net ID at a given point (pad or via).
 
+        Returns the net of the CLOSEST pad/via within tolerance.
+
         Args:
             x, y: Position to check (mm)
             layer: Layer to check
@@ -329,18 +465,23 @@ class TraceRouter:
         Returns:
             Net ID if found, None otherwise
         """
-        # Check pads
+        best_net_id: Optional[int] = None
+        best_dist = tolerance + 1  # Start with value beyond tolerance
+
+        # Check pads - find closest one
         for pad in self.parser.pads:
             if layer not in pad.layers:
                 continue
             dist = ((pad.x - x) ** 2 + (pad.y - y) ** 2) ** 0.5
-            if dist <= tolerance:
-                return pad.net_id
+            if dist <= tolerance and dist < best_dist:
+                best_dist = dist
+                best_net_id = pad.net_id
 
-        # Check vias
+        # Check vias - find closest one
         for via in self.parser.vias:
             dist = ((via.x - x) ** 2 + (via.y - y) ** 2) ** 0.5
-            if dist <= tolerance:
-                return via.net_id
+            if dist <= tolerance and dist < best_dist:
+                best_dist = dist
+                best_net_id = via.net_id
 
-        return None
+        return best_net_id
