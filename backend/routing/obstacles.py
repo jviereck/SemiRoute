@@ -8,7 +8,7 @@ from typing import Optional
 from backend.pcb.parser import PCBParser
 from backend.pcb.models import PadInfo, TraceInfo, ViaInfo, GraphicLine, GraphicArc
 from backend.routing.geometry import GeometryChecker
-from backend.routing.spatial_index import SpatialIndex
+from backend.routing.spatial_index import SpatialIndex, ELEM_PAD, ELEM_TRACE, ELEM_VIA
 
 
 @dataclass
@@ -378,6 +378,9 @@ class ElementAwareMap:
         info = parser.get_board_info()
         self._bounds = (info.min_x - 1, info.min_y - 1, info.max_x + 1, info.max_y + 1)
 
+        # Cache for is_blocked results: (gx, gy, trace_radius_key, net_id) -> bool
+        self._blocked_cache: dict[tuple[int, int, int, int], bool] = {}
+
     def _build_spatial_index(self) -> None:
         """Populate spatial index with all PCB elements."""
         # Add pads on this layer
@@ -422,48 +425,59 @@ class ElementAwareMap:
         Returns:
             True if position would violate clearance to any different-net element
         """
+        # Convert to grid coords for cache key
+        gx = int(round(x / self.resolution))
+        gy = int(round(y / self.resolution))
+        # Quantize trace_radius to avoid floating point key issues
+        tr_key = int(round(trace_radius * 1000))
+        net_key = net_id if net_id is not None else -1
+        cache_key = (gx, gy, tr_key, net_key)
+
+        cached = self._blocked_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         # Required clearance: design rule clearance + trace radius
         # Add a small buffer for grid discretization (half a grid cell)
         grid_buffer = 0.5 * self.resolution
         required_clearance = self.clearance + trace_radius + grid_buffer
 
-        # Query spatial index for nearby elements
-        for element in self._spatial_index.query_nearby(
+        # Query spatial index for nearby elements (now returns IndexedElement)
+        result = False
+        for indexed in self._spatial_index.query_nearby(
             x, y, required_clearance, self.layer
         ):
-            # Skip same-net elements
-            element_net_id = self._get_element_net_id(element)
-            if net_id is not None and element_net_id == net_id:
+            # Skip same-net elements (net_id is pre-extracted in IndexedElement)
+            if net_id is not None and indexed.net_id == net_id:
                 continue
 
-            # Get exact distance to element
-            distance = self._get_distance_to_element(x, y, element)
+            # Get exact distance to element using elem_type to dispatch
+            distance = self._get_distance_to_indexed(x, y, indexed)
 
             # Check clearance violation
             if distance < required_clearance:
-                return True
+                result = True
+                break
 
-        return False
+        self._blocked_cache[cache_key] = result
+        return result
 
-    def _get_element_net_id(self, element) -> int:
-        """Get the net ID of an element."""
-        if isinstance(element, PadInfo):
-            return element.net_id
-        elif isinstance(element, TraceInfo):
-            return element.net_id
-        elif isinstance(element, ViaInfo):
-            return element.net_id
-        return 0
+    def _get_distance_to_indexed(self, x: float, y: float, indexed) -> float:
+        """Get exact distance from point to indexed element edge."""
+        elem = indexed.element
+        elem_type = indexed.elem_type
 
-    def _get_distance_to_element(self, x: float, y: float, element) -> float:
-        """Get exact distance from point to element edge."""
-        if isinstance(element, PadInfo):
-            return GeometryChecker.point_to_pad_distance(x, y, element)
-        elif isinstance(element, TraceInfo):
-            return GeometryChecker.point_to_trace_distance(x, y, element)
-        elif isinstance(element, ViaInfo):
-            return GeometryChecker.point_to_via_distance(x, y, element)
+        if elem_type == ELEM_PAD:
+            return GeometryChecker.point_to_pad_distance(x, y, elem)
+        elif elem_type == ELEM_TRACE:
+            return GeometryChecker.point_to_trace_distance(x, y, elem)
+        elif elem_type == ELEM_VIA:
+            return GeometryChecker.point_to_via_distance(x, y, elem)
         return float('inf')
+
+    def clear_cache(self) -> None:
+        """Clear the blocked cell cache."""
+        self._blocked_cache.clear()
 
     def get_bounds(self) -> tuple[int, int, int, int]:
         """Get grid bounds (min_gx, min_gy, max_gx, max_gy)."""
