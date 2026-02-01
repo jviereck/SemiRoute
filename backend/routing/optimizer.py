@@ -73,15 +73,20 @@ class PathOptimizer:
         if self.hull_map is not None:
             points = self._remove_backtracks(points, net_id)
 
-        # Pass 5: Try to smooth corners by shortcutting (only with 45° paths)
+        # Pass 5: Eliminate direction reversals (both X and Y)
+        if self.hull_map is not None:
+            points = self._eliminate_axis_reversals(points, net_id, axis='x')
+            points = self._eliminate_axis_reversals(points, net_id, axis='y')
+
+        # Pass 6: Try to smooth corners by shortcutting (only with 45° paths)
         if self.hull_map is not None:
             points = self._smooth_corners_45(points, net_id)
 
-        # Pass 6: Minimize direction changes
+        # Pass 7: Minimize direction changes
         if self.hull_map is not None:
             points = self._minimize_direction_changes(points, net_id)
 
-        # Pass 7: Final colinear merge
+        # Pass 8: Final colinear merge
         points = self._merge_colinear(points)
 
         return [p.to_tuple() for p in points]
@@ -206,6 +211,160 @@ class PathOptimizer:
         for i in range(1, len(points)):
             total += points[i].distance_to(points[i-1])
         return total
+
+    def _eliminate_axis_reversals(
+        self,
+        points: list[Point],
+        net_id: Optional[int],
+        axis: str = 'x'
+    ) -> list[Point]:
+        """
+        Eliminate segments that go against the overall direction on a given axis.
+
+        Args:
+            points: Path points
+            net_id: Net ID for collision checking
+            axis: 'x' or 'y' - which axis to check for reversals
+
+        If the path goes in the positive direction overall, eliminate negative segments.
+        If the path goes in the negative direction overall, eliminate positive segments.
+        """
+        if len(points) < 3 or self.hull_map is None:
+            return points
+
+        # Helper to get coordinate on the specified axis
+        def get_coord(p: Point) -> float:
+            return p.x if axis == 'x' else p.y
+
+        # Determine overall direction on this axis
+        overall_delta = get_coord(points[-1]) - get_coord(points[0])
+        if abs(overall_delta) < 0.1:
+            # No significant movement on this axis, skip
+            return points
+
+        going_positive = overall_delta > 0
+
+        result = [points[0]]
+        i = 0
+
+        while i < len(points) - 1:
+            curr = result[-1]
+            next_pt = points[i + 1]
+
+            # Check if this segment goes against the overall direction
+            seg_delta = get_coord(next_pt) - get_coord(curr)
+            is_reversal = ((going_positive and seg_delta < -0.05) or
+                          (not going_positive and seg_delta > 0.05))
+
+            if is_reversal and i < len(points) - 2:
+                # Found a reversal - try to skip ahead to a point that doesn't reverse
+                best_j = i + 1
+                best_path: list[Point] = []
+
+                for j in range(i + 2, min(i + 10, len(points))):
+                    end = points[j]
+                    end_delta = get_coord(end) - get_coord(curr)
+
+                    # Check if going to this point would eliminate the reversal
+                    end_is_ok = ((going_positive and end_delta >= -0.05) or
+                                (not going_positive and end_delta <= 0.05))
+
+                    if end_is_ok:
+                        # Try direct path
+                        if self._path_clear(curr, end, net_id):
+                            dx = end.x - curr.x
+                            dy = end.y - curr.y
+                            if self._is_45_degree_angle(dx, dy):
+                                best_j = j
+                                best_path = []
+                                break
+
+                        # Try midpoint alternatives
+                        mid_candidates = self._generate_non_reversing_midpoints_generic(
+                            curr, end, going_positive, axis
+                        )
+                        for mid in mid_candidates:
+                            if (self._path_clear(curr, mid, net_id) and
+                                self._path_clear(mid, end, net_id)):
+                                dx1 = mid.x - curr.x
+                                dy1 = mid.y - curr.y
+                                dx2 = end.x - mid.x
+                                dy2 = end.y - mid.y
+                                if (self._is_45_degree_angle(dx1, dy1) and
+                                    self._is_45_degree_angle(dx2, dy2)):
+                                    # Check mid doesn't reverse on this axis
+                                    mid_delta = get_coord(mid) - get_coord(curr)
+                                    mid_ok = ((going_positive and mid_delta >= -0.05) or
+                                             (not going_positive and mid_delta <= 0.05))
+                                    if mid_ok:
+                                        best_j = j
+                                        best_path = [mid]
+                                        break
+                        if best_path:
+                            break
+
+                for p in best_path:
+                    result.append(p)
+                result.append(points[best_j])
+                i = best_j
+            else:
+                result.append(next_pt)
+                i += 1
+
+        return result
+
+    def _generate_non_reversing_midpoints_generic(
+        self,
+        start: Point,
+        end: Point,
+        going_positive: bool,
+        axis: str = 'x'
+    ) -> list[Point]:
+        """Generate midpoint candidates that don't reverse on the specified axis."""
+        candidates = []
+        dx = end.x - start.x
+        dy = end.y - start.y
+        adx = abs(dx)
+        ady = abs(dy)
+
+        if axis == 'x':
+            # Avoiding X reversal - prefer vertical movement first
+            if ady > adx:
+                # More vertical movement - go vertical first
+                vert_dist = ady - adx
+                mid_y = start.y + vert_dist * (1 if dy > 0 else -1)
+                candidates.append(Point(start.x, mid_y))
+
+            # Try diagonal that doesn't reverse X
+            diag = min(adx, ady)
+            diag_dx = diag * (1 if dx > 0 else -1)
+            diag_dy = diag * (1 if dy > 0 else -1)
+            if (going_positive and diag_dx >= 0) or (not going_positive and diag_dx <= 0):
+                candidates.append(Point(start.x + diag_dx, start.y + diag_dy))
+
+            # Try going to end's X first (vertical segment)
+            if adx < ady:
+                candidates.append(Point(start.x, end.y - (ady - adx) * (1 if dy > 0 else -1)))
+        else:
+            # Avoiding Y reversal - prefer horizontal movement first
+            if adx > ady:
+                # More horizontal movement - go horizontal first
+                horiz_dist = adx - ady
+                mid_x = start.x + horiz_dist * (1 if dx > 0 else -1)
+                candidates.append(Point(mid_x, start.y))
+
+            # Try diagonal that doesn't reverse Y
+            diag = min(adx, ady)
+            diag_dx = diag * (1 if dx > 0 else -1)
+            diag_dy = diag * (1 if dy > 0 else -1)
+            if (going_positive and diag_dy >= 0) or (not going_positive and diag_dy <= 0):
+                candidates.append(Point(start.x + diag_dx, start.y + diag_dy))
+
+            # Try going to end's Y first (horizontal segment)
+            if ady < adx:
+                candidates.append(Point(end.x - (adx - ady) * (1 if dx > 0 else -1), start.y))
+
+        return candidates
 
     def _minimize_direction_changes(self, points: list[Point], net_id: Optional[int]) -> list[Point]:
         """
