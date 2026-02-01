@@ -308,6 +308,26 @@ class SVGViewer {
     }
 
     /**
+     * Highlight all elements of a net on hover (faint highlight).
+     */
+    highlightHoverNet(netId) {
+        if (!this.svg) return;
+
+        // Clear existing hover highlights
+        this.svg.querySelectorAll('.net-hover').forEach(el => {
+            el.classList.remove('net-hover');
+        });
+
+        if (netId === null || netId === 0) return;
+
+        // Highlight new hover net (including user-created elements)
+        const selector = `.pad[data-net="${netId}"], .trace[data-net="${netId}"], .via[data-net="${netId}"], .user-trace[data-net="${netId}"], .user-via[data-net="${netId}"]`;
+        this.svg.querySelectorAll(selector).forEach(el => {
+            el.classList.add('net-hover');
+        });
+    }
+
+    /**
      * Highlight all elements of a net during routing (bolder/more visible).
      */
     highlightRoutingNet(netId) {
@@ -486,8 +506,9 @@ class SVGViewer {
      * @param {boolean} isPending - Whether this is a pending (uncommitted) via
      * @param {string} routeId - Route ID for tracking
      * @param {number} segmentIndex - Segment index within the route
+     * @param {number} netId - Net ID for highlighting
      */
-    renderUserVia(x, y, size, isPending = true, routeId = null, segmentIndex = null) {
+    renderUserVia(x, y, size, isPending = true, routeId = null, segmentIndex = null, netId = null) {
         if (!this.svg) return;
 
         // Find or create user traces group
@@ -511,6 +532,9 @@ class SVGViewer {
         }
         if (segmentIndex !== null) {
             via.setAttribute('data-segment-index', segmentIndex.toString());
+        }
+        if (netId !== null) {
+            via.setAttribute('data-net', netId.toString());
         }
         userGroup.appendChild(via);
 
@@ -537,9 +561,10 @@ class SVGViewer {
      * @param {number} width - Trace width in mm
      * @param {string} traceId - Unique trace ID for tracking
      * @param {number} segmentIndex - Segment index within the route
+     * @param {number} netId - Net ID for highlighting
      * @returns {string|null} The trace ID if successful
      */
-    confirmPendingTrace(path, layer, width, traceId = null, segmentIndex = null) {
+    confirmPendingTrace(path, layer, width, traceId = null, segmentIndex = null, netId = null) {
         if (!this.svg || path.length < 2) return null;
 
         // Layer colors
@@ -580,6 +605,9 @@ class SVGViewer {
         }
         if (segmentIndex !== null) {
             pathEl.setAttribute('data-segment-index', segmentIndex.toString());
+        }
+        if (netId !== null) {
+            pathEl.setAttribute('data-net', netId.toString());
         }
         userGroup.appendChild(pathEl);
 

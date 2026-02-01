@@ -17,6 +17,7 @@
     // Each route groups all segments from one routing session (start to double-click)
     let userRoutes = [];
     let nextRouteId = 1;
+    let lastHoveredNetId = null;
 
     // Layer colors for route list indicators
     const LAYER_COLORS = {
@@ -694,6 +695,12 @@
             if (appMode === 'trace' && routingSession) {
                 handleTraceMouseMove(e);
             }
+            handleNetHover(e);
+        });
+
+        container.addEventListener('mouseleave', () => {
+            viewer.highlightHoverNet(null);
+            lastHoveredNetId = null;
         });
 
         // Single click: commit segment, make click point the new start
@@ -833,6 +840,34 @@
             routeDebounceTimer = null;
             routeToCursor();
         }, ROUTE_DEBOUNCE_MS);
+    }
+
+    /**
+     * Handle mouse hovering over elements to highlight same-net items.
+     */
+    function handleNetHover(e) {
+        // Only hover highlight in select mode or trace mode when not actively routing
+        if (appMode === 'trace' && routingSession) {
+            if (lastHoveredNetId !== null) {
+                viewer.highlightHoverNet(null);
+                lastHoveredNetId = null;
+            }
+            return;
+        }
+
+        const match = findBestMatchAtPoint(e.clientX, e.clientY);
+        let netId = null;
+        if (match && (match.type === 'pad' || match.type === 'via' || match.type === 'trace')) {
+            const parsed = parseInt(match.element.dataset.net, 10);
+            if (!isNaN(parsed) && parsed > 0) {
+                netId = parsed;
+            }
+        }
+
+        if (netId !== lastHoveredNetId) {
+            viewer.highlightHoverNet(netId);
+            lastHoveredNetId = netId;
+        }
     }
 
     /**
@@ -1081,7 +1116,7 @@
         routingSession.sessionSegments.push(segment);
 
         // Render as confirmed with the session's route ID and segment index
-        viewer.confirmPendingTrace(segment.path, segment.layer, segment.width, routingSession.routeId, segmentIndex);
+        viewer.confirmPendingTrace(segment.path, segment.layer, segment.width, routingSession.routeId, segmentIndex, routingSession.startNet);
 
         // Move start point to new position
         routingSession.startPoint = { x: newStartX, y: newStartY };
@@ -1138,7 +1173,7 @@
 
             // Add via at cursor position
             routingSession.sessionVias.push({ x, y, size: viaSize });
-            viewer.renderUserVia(x, y, viaSize, false, routingSession.routeId, viaSegmentIndex);
+            viewer.renderUserVia(x, y, viaSize, false, routingSession.routeId, viaSegmentIndex, routingSession.startNet);
 
             // Switch layer and set via location as new start point
             routingSession.currentLayer = newLayer;
@@ -1641,7 +1676,8 @@
                     segment.layer,
                     segment.width,
                     companion.routeId,
-                    segmentIndex
+                    segmentIndex,
+                    companion.netId
                 );
 
                 // Update start point to end of committed path
@@ -1697,7 +1733,7 @@
 
                 // Place via
                 companion.sessionVias.push({ x, y, size: viaSize });
-                viewer.renderUserVia(x, y, viaSize, false, companion.routeId, viaSegmentIndex);
+                viewer.renderUserVia(x, y, viaSize, false, companion.routeId, viaSegmentIndex, companion.netId);
 
             } catch (error) {
                 console.error('Via check error for companion:', error);

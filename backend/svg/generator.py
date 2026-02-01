@@ -130,6 +130,26 @@ class SVGGenerator:
                 fill: #00FF00 !important;
                 fill-opacity: 0.9 !important;
             }
+            .pad.net-hover {
+                fill: #90EE90 !important;
+                fill-opacity: 0.6 !important;
+            }
+            .trace.net-hover {
+                stroke: #90EE90 !important;
+                stroke-opacity: 0.8 !important;
+            }
+            .via.net-hover {
+                fill: #90EE90 !important;
+                fill-opacity: 0.6 !important;
+            }
+            .user-trace.net-hover {
+                stroke: #90EE90 !important;
+                stroke-opacity: 0.8 !important;
+            }
+            .user-via.net-hover {
+                fill: #90EE90 !important;
+                fill-opacity: 0.6 !important;
+            }
             .layer { pointer-events: none; }
             .layer.hidden { display: none; }
             .drill-layer { pointer-events: none; }
