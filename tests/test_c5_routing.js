@@ -7,7 +7,7 @@
  */
 const puppeteer = require('puppeteer');
 
-const SERVER_URL = 'http://localhost:8000';
+const { SERVER_URL } = require('./config_test.js');
 
 // C5 pad 1 (GND) coordinates from PCB
 const C5_PAD1 = { x: 138.75, y: 99.55 };

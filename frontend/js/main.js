@@ -1021,11 +1021,14 @@
      * Handle double-click in trace mode.
      * Commits current segment and ends routing.
      */
+    /**
+     * Commits current segment and ends routing.
+     */
     async function handleTraceDoubleClick(e) {
         if (!routingSession) return;
 
         const bestMatch = findBestMatchAtPoint(e.clientX, e.clientY);
-        const target = getTargetCoordinates(e, bestMatch);
+        const target = getTargetCoordinates(e, bestMatch ? bestMatch.element : null);
 
         // Route to double-click point
         routingSession.cursorPoint = { x: target.x, y: target.y };
@@ -1155,7 +1158,7 @@
         if (segmentCount > 0) {
             const route = {
                 id: routingSession.routeId,
-                segments: routingSession.sessionSegments,
+                segments: [...routingSession.sessionSegments],
                 netId: routingSession.startNet,
                 visible: true
             };

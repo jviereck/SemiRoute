@@ -6,7 +6,7 @@
  */
 const puppeteer = require('puppeteer');
 
-const SERVER_URL = 'http://localhost:8000';
+const { SERVER_URL } = require('./config_test.js');
 
 // Test results
 const results = {

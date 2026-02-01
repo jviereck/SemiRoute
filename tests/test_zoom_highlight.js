@@ -2,10 +2,13 @@
  * Test zoom centering and highlight sizing.
  */
 const puppeteer = require('puppeteer');
-const { SERVER_URL } = require('./config');
+const { SERVER_URL } = require('./config_test');
 
 (async () => {
-    const browser = await puppeteer.launch({ headless: false, args: ['--window-size=1400,900'] });
+    const browser = await puppeteer.launch({
+        headless: true,
+        args: ['--window-size=1400,900', '--no-sandbox', '--disable-setuid-sandbox']
+    });
     const page = await browser.newPage();
     await page.setViewport({ width: 1400, height: 900 });
     await page.goto(SERVER_URL, { waitUntil: 'networkidle0' });
@@ -118,8 +121,6 @@ const { SERVER_URL } = require('./config');
     await page.screenshot({ path: '/tmp/pcb_highlight.png' });
     console.log('Screenshot: /tmp/pcb_highlight.png');
 
-    console.log('\nTest complete. Browser staying open for inspection.');
-    console.log('Press Ctrl+C to close.');
-
-    await new Promise(() => {});
+    console.log('\nTest complete.');
+    await browser.close();
 })();

@@ -1,12 +1,3 @@
-/**
- * Test configuration - determines server URL based on git branch.
- *
- * Port mapping:
- * - main: 8000
- * - *-a: 8001
- * - *-b: 8002
- * - etc.
- */
 const { execSync } = require('child_process');
 
 function getPortFromGitBranch() {
@@ -37,6 +28,9 @@ function getPortFromGitBranch() {
 }
 
 const PORT = getPortFromGitBranch();
-const SERVER_URL = `http://localhost:${PORT}`;
+const SERVER_URL = `http://127.0.0.1:${PORT}`;
 
-module.exports = { PORT, SERVER_URL };
+module.exports = {
+    PORT,
+    SERVER_URL,
+};

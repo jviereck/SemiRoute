@@ -3,7 +3,7 @@
  * Tests trace mode toggle, routing, and same-net crossing.
  */
 const puppeteer = require('puppeteer');
-const { SERVER_URL } = require('./config');
+const { SERVER_URL } = require('./config_test');
 const SCREENSHOT_DIR = '/tmp';
 
 // Test results
@@ -38,9 +38,9 @@ async function runTests() {
     log(`Server URL: ${SERVER_URL}`);
 
     const browser = await puppeteer.launch({
-        headless: false,
+        headless: true,
         devtools: false,
-        args: ['--window-size=1400,900']
+        args: ['--window-size=1400,900', '--no-sandbox', '--disable-setuid-sandbox']
     });
 
     const page = await browser.newPage();
@@ -478,8 +478,9 @@ async function runTests() {
             log('\n✓ All tests passed');
         }
 
-        log('\nBrowser left open for manual inspection. Press Ctrl+C to close.');
-        await new Promise(() => {}); // Keep browser open
+        log('\nTests completed successfully.');
+        await browser.close();
+        process.exit(results.failed > 0 ? 1 : 0);
 
     } catch (err) {
         console.error('\n❌ Test error:', err.message);

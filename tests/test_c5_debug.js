@@ -3,7 +3,7 @@
  */
 const puppeteer = require('puppeteer');
 
-const SERVER_URL = 'http://localhost:8000';
+const { SERVER_URL } = require('./config_test.js');
 const C5_PAD1 = { x: 138.75, y: 99.55 };
 
 async function sleep(ms) {
