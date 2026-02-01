@@ -909,6 +909,7 @@
         pendingCursorUpdate = false;
 
         try {
+            const routeStart = performance.now();
             const response = await fetch('/api/route', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -926,6 +927,10 @@
             });
 
             const data = await response.json();
+            const routeTime = performance.now() - routeStart;
+            if (routeTime > 100) {
+                console.log(`Route took ${routeTime.toFixed(0)}ms`);
+            }
 
             // Only update if we still have an active session
             if (routingSession) {

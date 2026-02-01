@@ -224,11 +224,21 @@ async def route_trace(request: RouteRequest):
                 message=f"Cannot route to different net: endpoint is on {end_net_name}, but routing from {start_net_name}"
             )
 
-    # Check if start or end points are blocked
+    # Check if start or end points are blocked - return early to avoid slow routing
     trace_radius = request.width / 2
     obs_map = trace_router.get_obstacle_map(request.layer, net_id)
     start_blocked = obs_map.is_blocked(request.start_x, request.start_y, trace_radius, net_id)
     end_blocked = obs_map.is_blocked(request.end_x, request.end_y, trace_radius, net_id)
+
+    # Return early if endpoints are blocked (avoid expensive routing attempt)
+    if start_blocked or end_blocked:
+        if start_blocked and end_blocked:
+            msg = "Both start and end points are blocked"
+        elif start_blocked:
+            msg = "Start point is blocked (inside obstacle/clearance zone)"
+        else:
+            msg = "End point is blocked (inside obstacle/clearance zone)"
+        return RouteResponse(success=False, path=[], message=msg)
 
     path = trace_router.route(
         start_x=request.start_x,
@@ -247,19 +257,10 @@ async def route_trace(request: RouteRequest):
             message=f"Route found with {len(path)} waypoints"
         )
     else:
-        # Provide more detailed failure message
-        if start_blocked and end_blocked:
-            msg = "Both start and end points are blocked"
-        elif start_blocked:
-            msg = "Start point is blocked (inside obstacle/clearance zone)"
-        elif end_blocked:
-            msg = "End point is blocked (inside obstacle/clearance zone)"
-        else:
-            msg = "No valid route found - path may be blocked by obstacles"
         return RouteResponse(
             success=False,
             path=[],
-            message=msg
+            message="No valid route found - path may be blocked by obstacles"
         )
 
 
