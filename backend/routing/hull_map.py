@@ -108,8 +108,21 @@ class HullMap:
     def _create_pad_hull(self, pad: PadInfo) -> Optional[IndexedHull]:
         """Create hull for a pad."""
         center = Point(pad.x, pad.y)
-        half_w = pad.width / 2
-        half_h = pad.height / 2
+
+        # For rotations near 90 or 270 degrees, swap width/height
+        # to get the effective dimensions after rotation
+        angle_mod = abs(pad.angle) % 180
+        swap_dims = 45 < angle_mod < 135
+
+        if swap_dims:
+            eff_width = pad.height
+            eff_height = pad.width
+        else:
+            eff_width = pad.width
+            eff_height = pad.height
+
+        half_w = eff_width / 2
+        half_h = eff_height / 2
 
         if pad.shape == 'circle':
             chain = HullGenerator.circular_hull(
@@ -117,27 +130,27 @@ class HullMap:
             )
         elif pad.shape == 'oval':
             # Oval is a stadium shape - use segment hull
-            if pad.width > pad.height:
-                # Horizontal oval
-                offset = (pad.width - pad.height) / 2
+            # Use effective dimensions (accounting for rotation)
+            if eff_width > eff_height:
+                # Horizontal oval (after accounting for rotation)
+                offset = (eff_width - eff_height) / 2
                 chain = HullGenerator.segment_hull(
                     Point(center.x - offset, center.y),
                     Point(center.x + offset, center.y),
-                    pad.height,
+                    eff_height,
                     self.clearance
                 )
             else:
-                # Vertical oval
-                offset = (pad.height - pad.width) / 2
+                # Vertical oval (after accounting for rotation)
+                offset = (eff_height - eff_width) / 2
                 chain = HullGenerator.segment_hull(
                     Point(center.x, center.y - offset),
                     Point(center.x, center.y + offset),
-                    pad.width,
+                    eff_width,
                     self.clearance
                 )
-            # Rotate if needed
-            if pad.angle != 0:
-                chain = self._rotate_chain(chain, center, pad.angle)
+            # Note: rotation already accounted for in dimension swap,
+            # so no need to rotate the chain
         elif pad.angle != 0:
             # Rotated rectangle
             chain = HullGenerator.rotated_rect_hull(

@@ -355,20 +355,21 @@ class HullGenerator:
         points.append(start + perp * half_width)
         points.append(end + perp * half_width)
 
-        # End cap (semicircle at end point)
-        for i in range(1, end_segments):
+        # End cap (semicircle at end point, going from top to bottom via right)
+        # Include endpoint at angle=0 which extends furthest in direction of travel
+        for i in range(1, end_segments + 1):
             angle = math.pi / 2 - math.pi * i / end_segments
-            offset = dir_norm * (half_width * math.sin(angle)) + perp * (half_width * math.cos(angle))
+            offset = dir_norm * (half_width * math.cos(angle)) + perp * (half_width * math.sin(angle))
             points.append(end + offset)
 
         # Right side (going from end back to start, offset to the right)
-        points.append(end - perp * half_width)
         points.append(start - perp * half_width)
 
-        # Start cap (semicircle at start point)
-        for i in range(1, end_segments):
+        # Start cap (semicircle at start point, going from bottom to top via left)
+        # angle goes from -pi/2 to pi/2 via -pi (the left side)
+        for i in range(1, end_segments + 1):
             angle = -math.pi / 2 - math.pi * i / end_segments
-            offset = dir_norm * (half_width * math.sin(angle)) + perp * (half_width * math.cos(angle))
+            offset = dir_norm * (half_width * math.cos(angle)) + perp * (half_width * math.sin(angle))
             points.append(start + offset)
 
         return LineChain(points=points)
