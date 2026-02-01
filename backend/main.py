@@ -1,7 +1,12 @@
 """FastAPI application for PCB viewer."""
+import uuid
+
 from fastapi import FastAPI, Query, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from kiutils.board import Board
+from kiutils.items.brditems import Segment
+from kiutils.items.common import Position
 from pydantic import BaseModel
 from typing import Optional
 
@@ -310,6 +315,39 @@ async def list_traces():
             for t in traces
         ]
     }
+
+
+@app.get("/api/export")
+async def export_pcb():
+    """Export PCB with user-routed traces as .kicad_pcb file."""
+    # Load original board
+    board = Board.from_file(str(DEFAULT_PCB_FILE))
+
+    # Get all pending traces
+    traces = trace_router.pending_store.get_all_traces()
+
+    # Convert each trace to kiutils Segments
+    for trace in traces:
+        for i in range(len(trace.segments) - 1):
+            x1, y1 = trace.segments[i]
+            x2, y2 = trace.segments[i + 1]
+            segment = Segment(
+                start=Position(X=x1, Y=y1),
+                end=Position(X=x2, Y=y2),
+                width=trace.width,
+                layer=trace.layer,
+                net=trace.net_id or 0,
+                tstamp=str(uuid.uuid4())
+            )
+            board.traceItems.append(segment)
+
+    # Return as downloadable file
+    content = board.to_sexpr(indent=0, newline=True)
+    return Response(
+        content=content,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": "attachment; filename=export.kicad_pcb"}
+    )
 
 
 # Mount static files last (after API routes)

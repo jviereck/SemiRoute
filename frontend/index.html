@@ -41,9 +41,25 @@
                     <p class="hint">No routes yet</p>
                 </div>
                 <div class="routes-actions">
+                    <button id="download-pcb" class="small-btn">Download PCB</button>
                     <button id="clear-all-routes" class="small-btn" disabled>Clear All</button>
                 </div>
             </section>
+
+            <!-- Download dialog modal -->
+            <div id="download-dialog" class="modal hidden">
+                <div class="modal-content">
+                    <h3>Export PCB</h3>
+                    <label>
+                        Filename:
+                        <input type="text" id="download-filename" value="modified.kicad_pcb" />
+                    </label>
+                    <div class="modal-actions">
+                        <button id="download-confirm" class="confirm-btn">Download</button>
+                        <button id="download-cancel" class="cancel-btn">Cancel</button>
+                    </div>
+                </div>
+            </div>
 
             <section class="panel">
                 <h2>Layers</h2>
