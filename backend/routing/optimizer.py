@@ -63,16 +63,15 @@ class PathOptimizer:
         # Pass 1: Remove duplicate/very close points
         points = self._remove_duplicates(points)
 
-        # Pass 2: Merge colinear segments
+        # Pass 2: Force all segments to 45-degree angles
+        points = self._enforce_45_degrees(points, net_id)
+
+        # Pass 3: Merge colinear segments
         points = self._merge_colinear(points)
 
-        # Pass 3: Try to smooth corners by shortcutting
+        # Pass 4: Try to smooth corners by shortcutting (only with 45° paths)
         if self.hull_map is not None:
-            points = self._smooth_corners(points, net_id)
-
-        # Pass 4: Snap to 45-degree angles where possible
-        if self.hull_map is not None:
-            points = self._snap_to_45(points, net_id)
+            points = self._smooth_corners_45(points, net_id)
 
         # Pass 5: Final colinear merge
         points = self._merge_colinear(points)
@@ -124,11 +123,129 @@ class PathOptimizer:
         result.append(points[-1])
         return result
 
-    def _smooth_corners(self, points: list[Point], net_id: Optional[int]) -> list[Point]:
+    def _enforce_45_degrees(self, points: list[Point], net_id: Optional[int]) -> list[Point]:
         """
-        Try to smooth corners by taking shortcuts.
+        Convert all segments to use only 45-degree angle multiples.
 
-        For each corner, try to skip it if the direct path is clear.
+        For each segment not at a 45° multiple, insert an intermediate point
+        to create two segments that are both at 45° multiples.
+        """
+        if len(points) < 2:
+            return points
+
+        result = [points[0]]
+
+        for i in range(1, len(points)):
+            prev = result[-1]
+            curr = points[i]
+
+            dx = curr.x - prev.x
+            dy = curr.y - prev.y
+
+            # Check if already at 45° multiple
+            if self._is_45_degree_angle(dx, dy):
+                result.append(curr)
+                continue
+
+            # Need to convert to 45° segments
+            # Strategy: use horizontal/vertical + 45° diagonal, or vice versa
+            mid_point = self._compute_45_midpoint(prev, curr, net_id)
+
+            if mid_point is not None:
+                result.append(mid_point)
+
+            result.append(curr)
+
+        return result
+
+    def _is_45_degree_angle(self, dx: float, dy: float, tolerance: float = 0.01) -> bool:
+        """Check if a direction vector is at a 45-degree multiple."""
+        if abs(dx) < tolerance and abs(dy) < tolerance:
+            return True  # Zero-length, doesn't matter
+
+        # 45° multiples: 0°, 45°, 90°, 135°, 180°, etc.
+        # At these angles: |dx| == |dy| (diagonal) or dx==0 or dy==0 (orthogonal)
+        adx = abs(dx)
+        ady = abs(dy)
+
+        # Orthogonal (0° or 90°)
+        if adx < tolerance or ady < tolerance:
+            return True
+
+        # Diagonal (45°)
+        ratio = adx / ady if ady > tolerance else float('inf')
+        if abs(ratio - 1.0) < tolerance:
+            return True
+
+        return False
+
+    def _compute_45_midpoint(
+        self,
+        start: Point,
+        end: Point,
+        net_id: Optional[int]
+    ) -> Optional[Point]:
+        """
+        Compute an intermediate point that creates two 45° segments.
+
+        Uses the "dogleg" pattern: one orthogonal segment + one diagonal,
+        or one diagonal + one orthogonal.
+        """
+        dx = end.x - start.x
+        dy = end.y - start.y
+        adx = abs(dx)
+        ady = abs(dy)
+
+        # Determine which pattern to use based on aspect ratio
+        # If more horizontal: horizontal first, then diagonal
+        # If more vertical: vertical first, then diagonal
+
+        candidates = []
+
+        if adx >= ady:
+            # More horizontal movement needed
+            # Option 1: Go diagonal first, then horizontal
+            diag_dist = ady  # Diagonal covers the y distance
+            diag_dx = diag_dist * (1 if dx > 0 else -1)
+            diag_dy = diag_dist * (1 if dy > 0 else -1)
+            mid1 = Point(start.x + diag_dx, start.y + diag_dy)
+            candidates.append(mid1)
+
+            # Option 2: Go horizontal first, then diagonal
+            horiz_dist = adx - ady
+            mid2 = Point(start.x + horiz_dist * (1 if dx > 0 else -1), start.y)
+            candidates.append(mid2)
+        else:
+            # More vertical movement needed
+            # Option 1: Go diagonal first, then vertical
+            diag_dist = adx
+            diag_dx = diag_dist * (1 if dx > 0 else -1)
+            diag_dy = diag_dist * (1 if dy > 0 else -1)
+            mid1 = Point(start.x + diag_dx, start.y + diag_dy)
+            candidates.append(mid1)
+
+            # Option 2: Go vertical first, then diagonal
+            vert_dist = ady - adx
+            mid2 = Point(start.x, start.y + vert_dist * (1 if dy > 0 else -1))
+            candidates.append(mid2)
+
+        # Pick the first valid candidate (check for collisions if hull_map available)
+        for mid in candidates:
+            if self.hull_map is None:
+                return mid
+            # Check both segments are clear
+            if (self._path_clear(start, mid, net_id) and
+                self._path_clear(mid, end, net_id)):
+                return mid
+
+        # If no clear path, return first candidate anyway (let routing handle it)
+        return candidates[0] if candidates else None
+
+    def _smooth_corners_45(self, points: list[Point], net_id: Optional[int]) -> list[Point]:
+        """
+        Try to smooth corners while maintaining 45° angles.
+
+        For each corner, try to skip it if the direct path is clear AND at 45°.
         """
         if len(points) < 3 or self.hull_map is None:
             return points
@@ -141,54 +258,14 @@ class PathOptimizer:
             best_j = i + 1
 
             for j in range(i + 2, len(points)):
-                if self._path_clear(result[-1], points[j], net_id):
+                dx = points[j].x - result[-1].x
+                dy = points[j].y - result[-1].y
+                # Only shortcut if result is at 45° and path is clear
+                if self._is_45_degree_angle(dx, dy) and self._path_clear(result[-1], points[j], net_id):
                     best_j = j
 
             result.append(points[best_j])
             i = best_j
-
-        return result
-
-    def _snap_to_45(self, points: list[Point], net_id: Optional[int]) -> list[Point]:
-        """
-        Snap segments to 45-degree angle multiples where possible.
-
-        For each segment, check if snapping to nearest 45° is valid.
-        """
-        if len(points) < 2 or self.hull_map is None:
-            return points
-
-        result = [points[0]]
-
-        for i in range(1, len(points)):
-            prev = result[-1]
-            curr = points[i]
-
-            # Current angle
-            dx = curr.x - prev.x
-            dy = curr.y - prev.y
-            angle = math.atan2(dy, dx)
-
-            # Find nearest 45-degree multiple
-            snap_angle = round(angle / (math.pi / 4)) * (math.pi / 4)
-
-            # Check if within threshold
-            if abs(angle - snap_angle) <= self.snap_threshold:
-                # Try to snap
-                length = math.sqrt(dx * dx + dy * dy)
-                snapped = Point(
-                    prev.x + length * math.cos(snap_angle),
-                    prev.y + length * math.sin(snap_angle)
-                )
-
-                # Check if snapped position is valid
-                if self._path_clear(prev, snapped, net_id):
-                    # Also check if we can continue from snapped to next point
-                    if i == len(points) - 1 or self._path_clear(snapped, points[i], net_id):
-                        result.append(snapped)
-                        continue
-
-            result.append(curr)
 
         return result
 
