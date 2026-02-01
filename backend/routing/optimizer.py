@@ -86,7 +86,11 @@ class PathOptimizer:
         if self.hull_map is not None:
             points = self._minimize_direction_changes(points, net_id)
 
-        # Pass 8: Final colinear merge
+        # Pass 8: Remove short jitter segments
+        if self.hull_map is not None:
+            points = self._remove_short_segments(points, net_id)
+
+        # Pass 9: Final colinear merge
         points = self._merge_colinear(points)
 
         return [p.to_tuple() for p in points]
@@ -634,6 +638,77 @@ class PathOptimizer:
 
         # If no clear path, return first candidate anyway (let routing handle it)
         return candidates[0] if candidates else None
+
+    def _remove_short_segments(
+        self,
+        points: list[Point],
+        net_id: Optional[int],
+        min_segment_length: float = 0.2
+    ) -> list[Point]:
+        """
+        Remove short jitter segments by merging them with adjacent segments.
+
+        For each segment shorter than min_segment_length, try to:
+        1. Skip the intermediate point if direct path is valid (45°, collision-free)
+        2. Adjust adjacent points to eliminate the jitter
+
+        Args:
+            points: Path points
+            net_id: Net ID for collision checking
+            min_segment_length: Minimum segment length to keep (mm)
+
+        Returns:
+            Path with short segments removed where possible
+        """
+        if len(points) < 3 or self.hull_map is None:
+            return points
+
+        result = [points[0]]
+        i = 0
+
+        while i < len(points) - 1:
+            curr = result[-1]
+            next_pt = points[i + 1]
+            seg_len = curr.distance_to(next_pt)
+
+            # Check if this is a short segment
+            if seg_len < min_segment_length and i < len(points) - 2:
+                # Try to skip this point and go directly to a later point
+                best_j = i + 1
+                best_path: list[Point] = []
+
+                # Look ahead to find a point we can connect to directly
+                for j in range(i + 2, min(i + 5, len(points))):
+                    end = points[j]
+
+                    # Try direct connection
+                    if self._path_clear(curr, end, net_id):
+                        dx = end.x - curr.x
+                        dy = end.y - curr.y
+                        if self._is_45_degree_angle(dx, dy):
+                            best_j = j
+                            best_path = []
+                            break
+
+                    # Try with one midpoint
+                    mid = self._find_best_midpoint(curr, end, net_id)
+                    if mid is not None:
+                        # Check this midpoint isn't creating another short segment
+                        if curr.distance_to(mid) >= min_segment_length:
+                            best_j = j
+                            best_path = [mid]
+                            break
+
+                # Use the best path found
+                for p in best_path:
+                    result.append(p)
+                result.append(points[best_j])
+                i = best_j
+            else:
+                result.append(next_pt)
+                i += 1
+
+        return result
 
     def _smooth_corners_45(self, points: list[Point], net_id: Optional[int]) -> list[Point]:
         """

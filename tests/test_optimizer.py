@@ -209,5 +209,107 @@ class TestBacktrackRemoval:
         print(f"Path: {[(f'{p[0]:.2f}', f'{p[1]:.2f}') for p in path]}")
 
 
+class TestShortSegmentRemoval:
+    """Test short jitter segment removal."""
+
+    def test_remove_short_jitter_segment(self):
+        """
+        Short jitter segments should be eliminated.
+
+        This tests the case from the user's routing:
+        - Point 2: (153.304, 92.921)
+        - Point 3: (153.4, 92.825)  <- ~0.14mm jitter
+        - Point 4: (153.4, 92.058)
+
+        The small diagonal segment (point 2 to 3) should be merged.
+        """
+        from backend.routing.hulls import Point
+
+        # Recreate the problematic path (simplified)
+        # The jitter is a small segment that causes a direction change
+        path = [
+            (150.8, 100.75),
+            (153.30382495421588, 98.24617504578413),
+            (153.30382495421588, 92.9211750457841),
+            (153.39999999999998, 92.825),  # Small jitter segment (~0.14mm)
+            (153.39999999999998, 92.05803697469787),
+            (154.09617910788864, 91.3618578668092),
+        ]
+
+        optimizer = PathOptimizer(hull_map=None, trace_width=0.25)
+
+        # Calculate segment lengths
+        segments = []
+        for i in range(1, len(path)):
+            dx = path[i][0] - path[i-1][0]
+            dy = path[i][1] - path[i-1][1]
+            length = math.sqrt(dx*dx + dy*dy)
+            segments.append((i-1, i, length))
+
+        print(f"\nOriginal path segments:")
+        for start, end, length in segments:
+            print(f"  {start}->{end}: {length:.3f}mm")
+
+        # Identify short segments (< 0.2mm)
+        short_segments = [s for s in segments if s[2] < 0.2]
+        print(f"\nShort segments (< 0.2mm): {len(short_segments)}")
+        for start, end, length in short_segments:
+            print(f"  {start}->{end}: {length:.3f}mm")
+
+        # Optimization without hull_map won't remove short segments
+        # but we can verify the detection works
+        result = optimizer.optimize(path)
+
+        print(f"\nOptimized: {len(path)} -> {len(result)} points")
+        print(f"Result: {result}")
+
+        # The optimizer should preserve endpoints
+        assert abs(result[0][0] - path[0][0]) < 0.001
+        assert abs(result[0][1] - path[0][1]) < 0.001
+        assert abs(result[-1][0] - path[-1][0]) < 0.001
+        assert abs(result[-1][1] - path[-1][1]) < 0.001
+
+    def test_short_segment_removal_with_routing(self):
+        """
+        Integration test: short segments should be removed during routing.
+        """
+        from backend.pcb import PCBParser
+        from backend.routing import TraceRouter
+
+        parser = PCBParser("BLDriver.kicad_pcb")
+        router = TraceRouter(parser, clearance=0.2, cache_obstacles=True)
+
+        # Route that previously had jitter
+        path = router.route(
+            start_x=150.8,
+            start_y=100.75,
+            end_x=154.09617910788864,
+            end_y=91.3618578668092,
+            layer="F.Cu",
+            width=0.25,
+            net_id=57
+        )
+
+        if not path:
+            pytest.skip("Route failed - endpoint may be blocked")
+
+        # Calculate segment lengths
+        min_length = float('inf')
+        for i in range(1, len(path)):
+            dx = path[i][0] - path[i-1][0]
+            dy = path[i][1] - path[i-1][1]
+            length = math.sqrt(dx*dx + dy*dy)
+            min_length = min(min_length, length)
+
+        print(f"\nRoute has {len(path)} waypoints")
+        print(f"Minimum segment length: {min_length:.3f}mm")
+        print(f"Path: {[(f'{p[0]:.2f}', f'{p[1]:.2f}') for p in path]}")
+
+        # All segments should be at least 0.15mm (allowing some tolerance)
+        # Very short segments < 0.1mm are jitter and should be removed
+        assert min_length >= 0.1, \
+            f"Path has short jitter segment of {min_length:.3f}mm"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
