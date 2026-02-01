@@ -1201,6 +1201,77 @@
         document.getElementById('trace-confirm').addEventListener('click', confirmTrace);
         document.getElementById('trace-cancel').addEventListener('click', cancelTrace);
         document.getElementById('clear-all-routes').addEventListener('click', clearAllRoutes);
+        setupDownloadControls();
+    }
+
+    /**
+     * Setup download controls.
+     */
+    function setupDownloadControls() {
+        const downloadBtn = document.getElementById('download-pcb');
+        const dialog = document.getElementById('download-dialog');
+        const filenameInput = document.getElementById('download-filename');
+        const confirmBtn = document.getElementById('download-confirm');
+        const cancelBtn = document.getElementById('download-cancel');
+
+        downloadBtn.addEventListener('click', () => {
+            dialog.classList.remove('hidden');
+            filenameInput.focus();
+            filenameInput.select();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            dialog.classList.add('hidden');
+        });
+
+        confirmBtn.addEventListener('click', async () => {
+            await downloadPCB(filenameInput.value);
+            dialog.classList.add('hidden');
+        });
+
+        // Close on Escape
+        dialog.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                dialog.classList.add('hidden');
+            }
+        });
+
+        // Submit on Enter
+        filenameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmBtn.click();
+            }
+        });
+
+        // Close on backdrop click
+        dialog.addEventListener('click', (e) => {
+            if (e.target === dialog) dialog.classList.add('hidden');
+        });
+    }
+
+    /**
+     * Download the PCB file with user-routed traces.
+     */
+    async function downloadPCB(filename) {
+        try {
+            const response = await fetch('/api/export');
+            if (!response.ok) throw new Error('Export failed');
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename || 'modified.kicad_pcb';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Download failed:', error);
+            alert('Failed to export PCB: ' + error.message);
+        }
     }
 
     /**
