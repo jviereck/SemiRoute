@@ -1,6 +1,17 @@
 """SVG to PNG rendering utilities."""
+import os
+import sys
 from io import BytesIO
 from pathlib import Path
+
+# On macOS, cairo from Homebrew needs the library path set
+if sys.platform == 'darwin':
+    homebrew_lib = '/opt/homebrew/lib'
+    if os.path.exists(homebrew_lib):
+        # Add to DYLD_LIBRARY_PATH for cffi to find cairo
+        current_path = os.environ.get('DYLD_LIBRARY_PATH', '')
+        if homebrew_lib not in current_path:
+            os.environ['DYLD_LIBRARY_PATH'] = f"{homebrew_lib}:{current_path}" if current_path else homebrew_lib
 
 try:
     import cairosvg
