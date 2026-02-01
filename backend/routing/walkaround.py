@@ -36,7 +36,7 @@ class WalkaroundRouter:
         hull_map: HullMap,
         trace_width: float,
         max_iterations: int = 1000,
-        corner_offset: float = 0.05
+        corner_offset: float = 0.1
     ):
         """
         Initialize walkaround router.
@@ -222,14 +222,9 @@ class WalkaroundRouter:
 
         # Edge direction and outward normal
         edge_dir = (e2 - e1).normalized()
-        # Outward normal for CCW polygon: perpendicular pointing out
+        # For CCW polygon, outward normal is edge direction rotated 90° clockwise
+        # Rotation: (dx, dy) -> (dy, -dx)
         outward = Point(edge_dir.y, -edge_dir.x)
-
-        # Check if normal points outward (away from centroid)
-        centroid = hull.centroid()
-        to_centroid = centroid - point
-        if outward.dot(to_centroid) > 0:
-            outward = Point(-outward.x, -outward.y)
 
         return point + outward * (self.half_width + self.corner_offset)
 
@@ -252,27 +247,25 @@ class WalkaroundRouter:
         prev_pt = hull.points[prev_idx]
         next_pt = hull.points[next_idx]
 
-        # Vectors along edges meeting at this vertex
-        v1 = (vertex - prev_pt).normalized()
-        v2 = (next_pt - vertex).normalized()
+        # Edge directions
+        v1 = (vertex - prev_pt).normalized()  # Direction of edge before vertex
+        v2 = (next_pt - vertex).normalized()  # Direction of edge after vertex
 
-        # Bisector direction (outward)
-        # The bisector of the exterior angle points outward
-        bisector = (v1 + v2).normalized()
+        # For CCW polygon, outward normal is edge direction rotated 90° clockwise
+        # Rotation: (dx, dy) -> (dy, -dx)
+        n1 = Point(v1.y, -v1.x)  # Outward normal for edge before vertex
+        n2 = Point(v2.y, -v2.x)  # Outward normal for edge after vertex
 
-        # If bisector is zero (180-degree angle), use perpendicular
-        if bisector.length() < 0.01:
-            bisector = v1.perpendicular()
+        # Average the normals to get outward direction at vertex
+        outward = (n1 + n2).normalized()
 
-        # Check if bisector points outward
-        centroid = hull.centroid()
-        to_centroid = centroid - vertex
-        if bisector.dot(to_centroid) > 0:
-            bisector = Point(-bisector.x, -bisector.y)
+        # If outward is zero (180-degree angle), use perpendicular to edge
+        if outward.length() < 0.01:
+            outward = n1
 
         # Offset by half width + corner offset
         offset = self.half_width + self.corner_offset
-        return vertex + bisector * offset
+        return vertex + outward * offset
 
     def _can_reach(self, start: Point, end: Point, net_id: Optional[int]) -> bool:
         """Check if we can reach end from start without obstruction."""

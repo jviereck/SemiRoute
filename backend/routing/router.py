@@ -218,7 +218,7 @@ class TraceRouter:
             hull_map=hull_map,
             trace_width=width,
             max_iterations=1000,
-            corner_offset=0.05
+            corner_offset=0.1
         )
 
         # Perform routing
