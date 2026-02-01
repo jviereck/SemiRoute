@@ -1283,6 +1283,25 @@
             };
             userRoutes.push(route);
             addRouteToList(route);
+
+            // Log full trace details with all waypoints
+            const allWaypoints = [];
+            for (const segment of route.segments) {
+                for (const point of segment.path) {
+                    // Avoid duplicating connection points between segments
+                    const last = allWaypoints[allWaypoints.length - 1];
+                    if (!last || last.x !== point[0] || last.y !== point[1]) {
+                        allWaypoints.push({ x: point[0], y: point[1], layer: segment.layer });
+                    }
+                }
+            }
+            console.log('Trace committed:', {
+                routeId: route.id,
+                netId: route.netId,
+                segmentCount: segmentCount,
+                viaCount: viaCount,
+                waypoints: allWaypoints
+            });
         }
 
         updateTraceStatus(`Done: ${segmentCount} segment(s), ${viaCount} via(s)`, 'success');
