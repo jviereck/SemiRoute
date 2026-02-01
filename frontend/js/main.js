@@ -790,6 +790,7 @@
     async function routeToCursor() {
         if (!routingSession || !routingSession.cursorPoint) return;
         if (isRouting) return;  // Already routing
+        if (viewer.isZooming) return;  // Don't route while zooming (prevents lag)
 
         const { startPoint, cursorPoint } = routingSession;
 

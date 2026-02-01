@@ -18,6 +18,14 @@ class SVGViewer {
         this.minScale = 0.1;
         this.maxScale = 50;
 
+        // Pending viewBox update (for requestAnimationFrame batching)
+        this._pendingViewBox = null;
+        this._rafId = null;
+
+        // Zooming state (for pausing routing during zoom)
+        this.isZooming = false;
+        this._zoomEndTimer = null;
+
         // Bind event handlers
         this._onMouseDown = this._onMouseDown.bind(this);
         this._onMouseMove = this._onMouseMove.bind(this);
@@ -98,6 +106,7 @@ class SVGViewer {
 
     /**
      * Handle mouse move for panning.
+     * Uses requestAnimationFrame to batch rapid mouse events for smooth performance.
      */
     _onMouseMove(e) {
         if (!this.isPanning) return;
@@ -112,7 +121,13 @@ class SVGViewer {
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
 
-        this._updateTransform();
+        // Batch DOM updates with requestAnimationFrame for smooth performance
+        if (!this._rafId) {
+            this._rafId = requestAnimationFrame(() => {
+                this._rafId = null;
+                this._updateTransform();
+            });
+        }
     }
 
     /**
@@ -125,9 +140,20 @@ class SVGViewer {
 
     /**
      * Handle mouse wheel for zooming.
+     * Uses requestAnimationFrame to batch rapid wheel events for smooth performance.
      */
     _onWheel(e) {
         e.preventDefault();
+
+        // Mark as zooming (for pausing routing during zoom)
+        this.isZooming = true;
+        if (this._zoomEndTimer) {
+            clearTimeout(this._zoomEndTimer);
+        }
+        this._zoomEndTimer = setTimeout(() => {
+            this.isZooming = false;
+            this._zoomEndTimer = null;
+        }, 150);  // Clear after 150ms of no scroll
 
         // Get mouse position in SVG coordinates BEFORE zoom
         const svgPoint = this._screenToSVG(e.clientX, e.clientY);
@@ -140,7 +166,6 @@ class SVGViewer {
         const newHeight = this.viewBox.height * zoomFactor;
 
         // Check zoom limits based on original viewBox
-        const currentScale = this.originalViewBox.width / this.viewBox.width;
         const newScale = this.originalViewBox.width / newWidth;
         if (newScale < this.minScale || newScale > this.maxScale) {
             return;
@@ -152,12 +177,19 @@ class SVGViewer {
         const mouseRatioX = (e.clientX - rect.left) / rect.width;
         const mouseRatioY = (e.clientY - rect.top) / rect.height;
 
+        // Update viewBox state immediately (for coordinate conversions)
         this.viewBox.x = svgPoint.x - newWidth * mouseRatioX;
         this.viewBox.y = svgPoint.y - newHeight * mouseRatioY;
         this.viewBox.width = newWidth;
         this.viewBox.height = newHeight;
 
-        this._updateTransform();
+        // Batch DOM updates with requestAnimationFrame for smooth performance
+        if (!this._rafId) {
+            this._rafId = requestAnimationFrame(() => {
+                this._rafId = null;
+                this._updateTransform();
+            });
+        }
     }
 
     /**
