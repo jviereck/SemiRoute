@@ -854,7 +854,7 @@
         }
         routeDebounceTimer = setTimeout(() => {
             routeDebounceTimer = null;
-            routeToCursor();
+            routeToCursor(true);  // Skip endpoint check for mouse move preview
         }, ROUTE_DEBOUNCE_MS);
     }
 
@@ -890,7 +890,11 @@
      * Route from start point to current cursor position.
      * Chains requests: starts next route as soon as previous completes.
      */
-    async function routeToCursor() {
+    /**
+     * Route from current start point to cursor position.
+     * @param {boolean} skipEndpointCheck - If true, skip the different-net endpoint check
+     */
+    async function routeToCursor(skipEndpointCheck = false) {
         if (!routingSession || !routingSession.cursorPoint) return;
         if (isRouting) return;  // Already routing
         if (viewer.isZooming) return;  // Don't route while zooming (prevents lag)
@@ -926,7 +930,8 @@
                     end_y: cursorPoint.y,
                     layer: routingSession.currentLayer,
                     width: routingSession.width,
-                    net_id: routingSession.startNet
+                    net_id: routingSession.startNet,
+                    skip_endpoint_check: skipEndpointCheck
                 }),
                 signal: routeAbortController.signal
             });
@@ -981,7 +986,7 @@
                 }
                 routeDebounceTimer = setTimeout(() => {
                     routeDebounceTimer = null;
-                    routeToCursor();
+                    routeToCursor(true);  // Skip endpoint check for mouse move preview
                 }, ROUTE_DEBOUNCE_MS);
             }
         }
@@ -1104,7 +1109,9 @@
             routingSession.cursorPoint = { x: target.x, y: target.y };
 
             // Route to click point and commit
-            await routeToCursor();
+            // Skip endpoint check if we didn't snap to a pad (snapElement is null)
+            const skipEndpointCheck = (snapElement === null);
+            await routeToCursor(skipEndpointCheck);
             await commitCurrentSegment(target.x, target.y);
         }
     }
@@ -1152,8 +1159,10 @@
         });
 
         // Route to double-click point
+        // Skip endpoint check if we didn't snap to a pad (snapElement is null)
+        const skipEndpointCheck = (snapElement === null);
         routingSession.cursorPoint = { x: target.x, y: target.y };
-        await routeToCursor();
+        await routeToCursor(skipEndpointCheck);
 
         // Commit if there's a path
         if (routingSession.pendingPath) {
