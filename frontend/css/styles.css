@@ -402,7 +402,6 @@ body.trace-mode-active #svg-container {
 .via.routing-active {
     stroke: #fff !important;
     stroke-width: 0.15 !important;
-    filter: brightness(1.5) drop-shadow(0 0 2px currentColor);
 }
 
 .trace.routing-active {

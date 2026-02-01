@@ -1143,8 +1143,9 @@
             routeAbortController.abort();
             routeAbortController = null;
         }
-        // Clear routing net highlight
+        // Clear routing net highlight and pending elements (start marker, preview)
         viewer.clearRoutingHighlight();
+        viewer.clearPendingElements();
         routingSession = null;
         document.getElementById('trace-actions').classList.add('hidden');
         hideTraceError();
