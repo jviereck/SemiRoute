@@ -589,3 +589,81 @@ body.trace-mode-active #svg-container {
 .modal-actions .cancel-btn:hover {
     background: #d32f2f;
 }
+
+/* Controls divider and subtitle */
+.controls-divider {
+    border-top: 1px solid #444;
+    margin: 12px 0 8px 0;
+}
+
+.controls-subtitle {
+    font-size: 0.75rem;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+/* Companion mode styles */
+#companion-status {
+    margin-top: 8px;
+    padding: 8px;
+    background: #2a3a4a;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+#companion-status.hidden {
+    display: none;
+}
+
+#companion-status > div {
+    margin-bottom: 4px;
+}
+
+#companion-status > div:last-child {
+    margin-bottom: 0;
+}
+
+#reference-net {
+    color: #00FFFF;
+    font-weight: bold;
+}
+
+#companion-net-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+#companion-net-list .hint {
+    color: #666;
+    font-style: italic;
+}
+
+.companion-net-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    background: #3a3a3a;
+    border-radius: 3px;
+    font-size: 0.8rem;
+    color: #FF9800;
+}
+
+/* Reference trace highlight */
+.reference-trace {
+    stroke: #00FFFF !important;
+    stroke-opacity: 1 !important;
+    filter: drop-shadow(0 0 3px #00FFFF);
+}
+
+/* Companion preview styles */
+.companion-preview {
+    pointer-events: none;
+}
+
+/* Companion start marker */
+.companion-start-marker {
+    pointer-events: none;
+}

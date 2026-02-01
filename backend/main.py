@@ -317,6 +317,133 @@ async def list_traces():
     }
 
 
+@app.get("/api/trace-path/{net_id}")
+async def get_trace_path(
+    net_id: int,
+    layer: str = Query(..., description="Layer name (e.g., F.Cu)"),
+    x: float = Query(..., description="Starting X coordinate"),
+    y: float = Query(..., description="Starting Y coordinate")
+):
+    """
+    Get connected trace path starting from a point.
+
+    Reconstructs the trace path on the specified net/layer,
+    starting from the nearest point to (x, y).
+    """
+    # Get all traces on this net and layer
+    traces = [t for t in pcb_parser.get_traces_by_layer(layer) if t.net_id == net_id]
+
+    if not traces:
+        return {"success": False, "path": [], "width": 0.25, "message": "No traces found"}
+
+    # Find the trace segment closest to the starting point
+    best_trace = None
+    best_dist = float('inf')
+
+    for trace in traces:
+        # Check distance to both endpoints
+        dist_start = ((trace.start_x - x) ** 2 + (trace.start_y - y) ** 2) ** 0.5
+        dist_end = ((trace.end_x - x) ** 2 + (trace.end_y - y) ** 2) ** 0.5
+        min_dist = min(dist_start, dist_end)
+
+        if min_dist < best_dist:
+            best_dist = min_dist
+            best_trace = trace
+
+    if not best_trace:
+        return {"success": False, "path": [], "width": 0.25, "message": "No trace found near point"}
+
+    # Build connected path starting from best_trace
+    path = []
+    visited = set()
+    width = best_trace.width
+
+    def add_trace_to_path(trace, start_from_start=True):
+        """Add trace segment to path, avoiding duplicates."""
+        trace_id = id(trace)
+        if trace_id in visited:
+            return
+        visited.add(trace_id)
+
+        if start_from_start:
+            if not path or (path[-1][0] != trace.start_x or path[-1][1] != trace.start_y):
+                path.append([trace.start_x, trace.start_y])
+            path.append([trace.end_x, trace.end_y])
+        else:
+            if not path or (path[-1][0] != trace.end_x or path[-1][1] != trace.end_y):
+                path.append([trace.end_x, trace.end_y])
+            path.append([trace.start_x, trace.start_y])
+
+    def find_connected_traces(end_x, end_y, tolerance=0.01):
+        """Find traces that connect to the given endpoint."""
+        connected = []
+        for trace in traces:
+            if id(trace) in visited:
+                continue
+            # Check if trace starts or ends at this point
+            if abs(trace.start_x - end_x) < tolerance and abs(trace.start_y - end_y) < tolerance:
+                connected.append((trace, True))  # Start from start
+            elif abs(trace.end_x - end_x) < tolerance and abs(trace.end_y - end_y) < tolerance:
+                connected.append((trace, False))  # Start from end
+        return connected
+
+    # Start with the best trace
+    add_trace_to_path(best_trace, True)
+
+    # Walk forward from end
+    current_x, current_y = best_trace.end_x, best_trace.end_y
+    while True:
+        connected = find_connected_traces(current_x, current_y)
+        if not connected:
+            break
+        next_trace, from_start = connected[0]
+        add_trace_to_path(next_trace, from_start)
+        if from_start:
+            current_x, current_y = next_trace.end_x, next_trace.end_y
+        else:
+            current_x, current_y = next_trace.start_x, next_trace.start_y
+
+    # Walk backward from start (prepend to path)
+    visited.clear()
+    visited.add(id(best_trace))
+    backward_path = []
+
+    current_x, current_y = best_trace.start_x, best_trace.start_y
+    while True:
+        connected = find_connected_traces(current_x, current_y)
+        if not connected:
+            break
+        next_trace, from_start = connected[0]
+        visited.add(id(next_trace))
+        if from_start:
+            backward_path.insert(0, [next_trace.start_x, next_trace.start_y])
+            current_x, current_y = next_trace.start_x, next_trace.start_y
+            # Actually we need the other end
+            backward_path.insert(0, [next_trace.end_x, next_trace.end_y])
+            current_x, current_y = next_trace.end_x, next_trace.end_y
+        else:
+            backward_path.insert(0, [next_trace.end_x, next_trace.end_y])
+            current_x, current_y = next_trace.end_x, next_trace.end_y
+            backward_path.insert(0, [next_trace.start_x, next_trace.start_y])
+            current_x, current_y = next_trace.start_x, next_trace.start_y
+
+    # Combine backward and forward paths
+    full_path = backward_path + path
+
+    # Remove duplicate consecutive points
+    cleaned_path = []
+    for point in full_path:
+        if not cleaned_path or cleaned_path[-1] != point:
+            cleaned_path.append(point)
+
+    return {
+        "success": True,
+        "path": cleaned_path,
+        "width": width,
+        "message": f"Found path with {len(cleaned_path)} points"
+    }
+
+
 @app.get("/api/export")
 async def export_pcb():
     """Export PCB with user-routed traces as .kicad_pcb file."""

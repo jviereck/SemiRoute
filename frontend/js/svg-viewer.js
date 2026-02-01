@@ -713,4 +713,123 @@ class SVGViewer {
             el.setAttribute('data-segment-index', newIndex.toString());
         });
     }
+
+    // ==================== COMPANION MODE METHODS ====================
+
+    /**
+     * Highlight a reference trace for companion routing.
+     * @param {string} routeId - The route ID to highlight
+     */
+    highlightReferenceTrace(routeId) {
+        if (!this.svg) return;
+
+        this.clearReferenceHighlight();
+
+        // Find all elements with this route ID and add reference class
+        const elements = this.svg.querySelectorAll(`[data-trace-id="${routeId}"]`);
+        elements.forEach(el => {
+            el.classList.add('reference-trace');
+        });
+    }
+
+    /**
+     * Clear reference trace highlight.
+     */
+    clearReferenceHighlight() {
+        if (!this.svg) return;
+
+        this.svg.querySelectorAll('.reference-trace').forEach(el => {
+            el.classList.remove('reference-trace');
+        });
+    }
+
+    /**
+     * Render a companion trace preview.
+     * @param {Array} path - Array of [x, y] points
+     * @param {string} layer - Layer name
+     * @param {number} width - Trace width
+     * @param {boolean} success - Whether routing succeeded (affects color)
+     */
+    renderCompanionPreview(path, layer, width, success = true) {
+        if (!this.svg || path.length < 2) return;
+
+        // Layer colors
+        const layerColors = {
+            'F.Cu': '#C83232',
+            'B.Cu': '#3232C8',
+            'In1.Cu': '#C8C832',
+            'In2.Cu': '#32C8C8'
+        };
+        const baseColor = layerColors[layer] || '#888888';
+        const color = success ? baseColor : '#FF6600';  // Orange for failed routes
+
+        // Create path element
+        const pathData = path.map((p, i) =>
+            (i === 0 ? 'M' : 'L') + p[0].toFixed(4) + ',' + p[1].toFixed(4)
+        ).join(' ');
+
+        const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        pathEl.setAttribute('d', pathData);
+        pathEl.setAttribute('stroke', color);
+        pathEl.setAttribute('stroke-width', width);
+        pathEl.setAttribute('stroke-linecap', 'round');
+        pathEl.setAttribute('stroke-linejoin', 'round');
+        pathEl.setAttribute('fill', 'none');
+        pathEl.setAttribute('stroke-opacity', success ? '0.5' : '0.7');
+        pathEl.setAttribute('class', 'companion-preview pending-element');
+
+        if (!success) {
+            pathEl.setAttribute('stroke-dasharray', '0.5,0.3');
+        }
+
+        this.svg.appendChild(pathEl);
+    }
+
+    /**
+     * Clear all companion preview traces.
+     */
+    clearCompanionPreviews() {
+        if (!this.svg) return;
+
+        this.svg.querySelectorAll('.companion-preview').forEach(el => el.remove());
+    }
+
+    /**
+     * Show a numbered start marker for a companion trace.
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     * @param {number} index - Companion index (1-based)
+     */
+    showCompanionStartMarker(x, y, index) {
+        if (!this.svg) return;
+
+        const size = 0.5;
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'companion-start-marker pending-element');
+
+        // Circle background
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', x);
+        circle.setAttribute('cy', y);
+        circle.setAttribute('r', size);
+        circle.setAttribute('fill', '#FF9800');
+        circle.setAttribute('fill-opacity', '0.8');
+        circle.setAttribute('stroke', '#FFF');
+        circle.setAttribute('stroke-width', '0.1');
+
+        // Number text
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', x);
+        text.setAttribute('y', y);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'central');
+        text.setAttribute('font-size', '0.6');
+        text.setAttribute('font-weight', 'bold');
+        text.setAttribute('fill', '#000');
+        text.textContent = index.toString();
+
+        group.appendChild(circle);
+        group.appendChild(text);
+        this.svg.appendChild(group);
+    }
 }
