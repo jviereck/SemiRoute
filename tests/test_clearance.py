@@ -3,7 +3,7 @@ import pytest
 import math
 
 from backend.pcb.parser import PCBParser
-from backend.routing import TraceRouter, ObstacleMap
+from backend.routing import TraceRouter, ObstacleMap, GeometryChecker
 from backend.config import DEFAULT_PCB_FILE
 
 
@@ -19,26 +19,36 @@ def router(parser):
     return TraceRouter(parser, clearance=0.2, cache_obstacles=True)
 
 
-def point_to_segment_distance(px, py, x1, y1, x2, y2):
-    """Calculate shortest distance from point to line segment."""
-    dx = x2 - x1
-    dy = y2 - y1
-    length_sq = dx * dx + dy * dy
+def segment_to_pad_min_distance(x1, y1, x2, y2, pad, num_samples=50):
+    """
+    Calculate minimum distance from a line segment to a pad using exact geometry.
 
-    if length_sq < 0.0001:
-        return math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
+    Samples points along the segment and uses GeometryChecker for accurate
+    distance calculation that handles rotated pads correctly.
+    """
+    length = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+    if length < 0.001:
+        return GeometryChecker.point_to_pad_distance(x1, y1, pad)
 
-    t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / length_sq))
-    proj_x = x1 + t * dx
-    proj_y = y1 + t * dy
-    return math.sqrt((px - proj_x) ** 2 + (py - proj_y) ** 2)
+    min_dist = float('inf')
+    for i in range(num_samples + 1):
+        t = i / num_samples
+        px = x1 + t * (x2 - x1)
+        py = y1 + t * (y2 - y1)
+        dist = GeometryChecker.point_to_pad_distance(px, py, pad)
+        min_dist = min(min_dist, dist)
+
+    return min_dist
 
 
 def check_path_clearance_to_pads(path, trace_width, layer, pads, exclude_net_id, clearance):
     """
     Check that a path maintains clearance to all pads of other nets.
 
-    Returns list of violations: [(segment_idx, pad_id, actual_clearance, required_clearance)]
+    Uses GeometryChecker for accurate distance calculation that handles
+    rotated pads correctly (not just bounding circle approximation).
+
+    Returns list of violations: [(segment_idx, pad_id, net_id, actual_clearance, required_clearance)]
     """
     trace_radius = trace_width / 2
     violations = []
@@ -50,21 +60,16 @@ def check_path_clearance_to_pads(path, trace_width, layer, pads, exclude_net_id,
         if pad.net_id == exclude_net_id:
             continue
 
-        # Get pad edge radius (use larger dimension for safety)
-        pad_radius = max(pad.width, pad.height) / 2
-
         # Check each segment of the path
         for i in range(len(path) - 1):
             x1, y1 = path[i]
             x2, y2 = path[i + 1]
 
-            # Distance from pad center to trace centerline
-            dist_to_centerline = point_to_segment_distance(
-                pad.x, pad.y, x1, y1, x2, y2
-            )
+            # Distance from trace segment to pad edge (using exact geometry)
+            dist_to_pad_edge = segment_to_pad_min_distance(x1, y1, x2, y2, pad)
 
-            # Actual clearance = distance - trace_radius - pad_radius
-            actual_clearance = dist_to_centerline - trace_radius - pad_radius
+            # Actual clearance = distance to pad edge - trace radius
+            actual_clearance = dist_to_pad_edge - trace_radius
 
             if actual_clearance < clearance - 0.001:  # Small tolerance
                 violations.append((
@@ -136,69 +141,52 @@ class TestTraceClearance:
 
     def test_route_near_ic_pins(self, router, parser):
         """
-        Specifically test routing near IC pins where pins are closely spaced.
-        This is the scenario the user reported (U2 pins 7, 8, 9).
+        Test routing to an IC pin from a nearby component on the same net.
+
+        Routes from C5 pad 1 (GND) to U2 pad 8 (GND), which requires navigating
+        near the closely spaced U2 pins 7, 8, 9 without violating clearances.
         """
-        # Find U2 component
-        u2_pads = [p for p in parser.pads if p.footprint_ref == 'U2']
+        # Find the specific pads we need
+        c5_pad1 = None
+        u2_pad8 = None
 
-        if not u2_pads:
-            # Try to find any IC with multiple pins
-            footprint_pads = {}
-            for p in parser.pads:
-                if p.footprint_ref not in footprint_pads:
-                    footprint_pads[p.footprint_ref] = []
-                footprint_pads[p.footprint_ref].append(p)
+        for pad in parser.pads:
+            if pad.footprint_ref == 'C5' and pad.name == '1':
+                c5_pad1 = pad
+            elif pad.footprint_ref == 'U2' and pad.name == '8':
+                u2_pad8 = pad
 
-            # Find a component with at least 8 pins
-            for ref, pads in footprint_pads.items():
-                if len(pads) >= 8:
-                    u2_pads = pads
-                    break
+        if c5_pad1 is None or u2_pad8 is None:
+            pytest.skip("Required pads C5:1 or U2:8 not found")
 
-        if not u2_pads:
-            pytest.skip("No suitable IC found")
+        # Verify they're on the same net (GND)
+        if c5_pad1.net_id != u2_pad8.net_id:
+            pytest.skip("C5:1 and U2:8 not on same net")
 
-        # Find pin 8 or equivalent middle pin
-        target_pad = None
-        for p in sorted(u2_pads, key=lambda x: x.name):
-            if p.name == '8':
-                target_pad = p
-                break
-
-        if not target_pad:
-            target_pad = u2_pads[len(u2_pads) // 2]
-
-        # Get target net
-        target_net = target_pad.net_id
-        layer = 'F.Cu' if 'F.Cu' in target_pad.layers else list(target_pad.layers)[0]
-
-        # Find a starting point away from the IC
-        start_x = target_pad.x - 5
-        start_y = target_pad.y
-
-        # Route to the target pad
+        layer = 'F.Cu'
         trace_width = 0.25
+
+        # Route from C5 to U2 pad 8
         path = router.route(
-            start_x, start_y,
-            target_pad.x, target_pad.y,
+            c5_pad1.x, c5_pad1.y,
+            u2_pad8.x, u2_pad8.y,
             layer=layer,
             width=trace_width,
-            net_id=target_net
+            net_id=c5_pad1.net_id
         )
 
         if not path:
             pytest.skip("No route found")
 
-        # Check clearance
+        # Check clearance to all other-net pads
         violations = check_path_clearance_to_pads(
             path, trace_width, layer, parser.pads,
-            exclude_net_id=target_net,
+            exclude_net_id=c5_pad1.net_id,
             clearance=router.clearance
         )
 
         if violations:
-            print(f"\nClearance violations near {target_pad.footprint_ref}:")
+            print(f"\nClearance violations routing C5->U2:8:")
             for seg_idx, pad_id, net_id, actual, required in violations:
                 net_name = parser.nets.get(net_id, f"net_{net_id}")
                 print(f"  Segment {seg_idx}: pad {pad_id} (net: {net_name})")
