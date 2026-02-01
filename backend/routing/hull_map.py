@@ -423,10 +423,13 @@ class HullMap:
         if len(segments) < 2:
             return  # No segments to add
 
+        print(f"[HullMap] Adding pending trace {trace_id}: net={net_id}, width={width}, clearance={self.trace_clearance}, {len(segments)} points")
+
         # Create a hull for each segment
         for i in range(len(segments) - 1):
             start = Point(segments[i][0], segments[i][1])
             end = Point(segments[i + 1][0], segments[i + 1][1])
+            print(f"  Segment {i}: ({start.x:.2f}, {start.y:.2f}) -> ({end.x:.2f}, {end.y:.2f})")
 
             chain = HullGenerator.segment_hull(
                 start, end, width, self.trace_clearance

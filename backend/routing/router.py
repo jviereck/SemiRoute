@@ -217,6 +217,13 @@ class TraceRouter:
         pending = self.pending_store.get_traces_by_layer(layer)
         pending_filtered = [t for t in pending
                           if net_id is None or t.net_id != net_id]
+
+        # Debug: log what pending traces are being considered
+        if pending_filtered:
+            print(f"[Route] net_id={net_id}, layer={layer}: Adding {len(pending_filtered)} pending trace(s) as obstacles:")
+            for t in pending_filtered:
+                print(f"  - {t.id}: net={t.net_id}, width={t.width}, {len(t.segments)} points")
+
         for trace in pending_filtered:
             hull_map.add_pending_trace(
                 trace.id,
