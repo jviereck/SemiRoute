@@ -913,6 +913,111 @@ class TestPendingTraceStore:
         assert store.is_point_blocked(202.5, 80.0, 0.1, "F.Cu", clearance=0.2)
 
 
+class TestPendingTraceStorePersistence:
+    """Tests for PendingTraceStore JSON file persistence."""
+
+    def test_traces_saved_to_file(self, tmp_path):
+        """Test that traces are saved to JSON file when added."""
+        storage_file = tmp_path / "traces.json"
+        store = PendingTraceStore(storage_path=storage_file)
+
+        store.add_trace("t1", [(0, 0), (10, 10)], 0.25, "F.Cu", net_id=5)
+
+        assert storage_file.exists()
+        import json
+        data = json.loads(storage_file.read_text())
+        assert len(data["traces"]) == 1
+        assert data["traces"][0]["id"] == "t1"
+        assert data["traces"][0]["net_id"] == 5
+
+    def test_traces_loaded_on_creation(self, tmp_path):
+        """Test that traces are loaded from file when store is created."""
+        storage_file = tmp_path / "traces.json"
+
+        # Create store and add traces
+        store1 = PendingTraceStore(storage_path=storage_file)
+        store1.add_trace("t1", [(0, 0), (10, 10)], 0.25, "F.Cu", net_id=5)
+        store1.add_trace("t2", [(5, 5), (15, 15)], 0.3, "B.Cu")
+
+        # Create new store from same file (simulates server restart)
+        store2 = PendingTraceStore(storage_path=storage_file)
+        traces = store2.get_all_traces()
+
+        assert len(traces) == 2
+        t1 = store2.get_trace("t1")
+        assert t1 is not None
+        assert t1.layer == "F.Cu"
+        assert t1.width == 0.25
+        assert t1.net_id == 5
+
+    def test_remove_updates_file(self, tmp_path):
+        """Test that removing a trace updates the file."""
+        storage_file = tmp_path / "traces.json"
+        store = PendingTraceStore(storage_path=storage_file)
+
+        store.add_trace("t1", [(0, 0), (10, 10)], 0.25, "F.Cu")
+        store.add_trace("t2", [(5, 5), (15, 15)], 0.25, "B.Cu")
+        store.remove_trace("t1")
+
+        import json
+        data = json.loads(storage_file.read_text())
+        assert len(data["traces"]) == 1
+        assert data["traces"][0]["id"] == "t2"
+
+    def test_clear_empties_file(self, tmp_path):
+        """Test that clear() empties the file."""
+        storage_file = tmp_path / "traces.json"
+        store = PendingTraceStore(storage_path=storage_file)
+
+        store.add_trace("t1", [(0, 0), (10, 10)], 0.25, "F.Cu")
+        store.add_trace("t2", [(5, 5), (15, 15)], 0.25, "B.Cu")
+        store.clear()
+
+        import json
+        data = json.loads(storage_file.read_text())
+        assert len(data["traces"]) == 0
+
+    def test_corrupted_file_handled_gracefully(self, tmp_path):
+        """Test that corrupted JSON file doesn't crash, starts fresh."""
+        storage_file = tmp_path / "traces.json"
+        storage_file.write_text("{ invalid json }")
+
+        # Should not raise, just start with empty store
+        store = PendingTraceStore(storage_path=storage_file)
+        assert len(store.get_all_traces()) == 0
+
+    def test_missing_file_starts_empty(self, tmp_path):
+        """Test that missing file results in empty store."""
+        storage_file = tmp_path / "nonexistent.json"
+
+        store = PendingTraceStore(storage_path=storage_file)
+        assert len(store.get_all_traces()) == 0
+
+    def test_works_without_storage_path(self):
+        """Test that store works without persistence (backwards compatible)."""
+        store = PendingTraceStore()
+        store.add_trace("t1", [(0, 0), (10, 10)], 0.25, "F.Cu")
+
+        assert len(store.get_all_traces()) == 1
+        store.remove_trace("t1")
+        assert len(store.get_all_traces()) == 0
+
+    def test_segments_preserve_tuples(self, tmp_path):
+        """Test that segment coordinates are preserved correctly after load."""
+        storage_file = tmp_path / "traces.json"
+
+        store1 = PendingTraceStore(storage_path=storage_file)
+        original_segments = [(100.5, 50.25), (110.75, 60.125)]
+        store1.add_trace("t1", original_segments, 0.25, "F.Cu")
+
+        store2 = PendingTraceStore(storage_path=storage_file)
+        t1 = store2.get_trace("t1")
+
+        assert len(t1.segments) == 2
+        assert t1.segments[0] == (100.5, 50.25)
+        assert t1.segments[1] == (110.75, 60.125)
+
+
 class TestPendingTraceRouterIntegration:
     """Integration tests for pending traces with the router."""
 

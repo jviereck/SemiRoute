@@ -1,4 +1,5 @@
 """Main trace router using A* pathfinding."""
+from pathlib import Path
 from typing import Optional
 
 from backend.pcb.parser import PCBParser
@@ -24,7 +25,8 @@ class TraceRouter:
         parser: PCBParser,
         clearance: float = 0.2,
         grid_resolution: float = 0.025,
-        cache_obstacles: bool = False
+        cache_obstacles: bool = False,
+        pending_traces_file: Optional[Path] = None
     ):
         """
         Initialize the router.
@@ -34,6 +36,7 @@ class TraceRouter:
             clearance: Minimum clearance to obstacles (mm)
             grid_resolution: Routing grid cell size (mm)
             cache_obstacles: Whether to cache obstacle maps at startup
+            pending_traces_file: Optional path to JSON file for trace persistence
         """
         self.parser = parser
         self.clearance = clearance
@@ -43,7 +46,10 @@ class TraceRouter:
         self._obstacle_cache: dict[str, ObstacleMap] = {}
 
         # Store for pending user-created traces
-        self.pending_store = PendingTraceStore(grid_resolution=grid_resolution)
+        self.pending_store = PendingTraceStore(
+            grid_resolution=grid_resolution,
+            storage_path=pending_traces_file
+        )
 
         if cache_obstacles:
             self._build_obstacle_cache()

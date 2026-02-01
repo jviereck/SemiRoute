@@ -1,5 +1,7 @@
 """Pending trace storage for user-created routes."""
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Optional
 
 
@@ -21,17 +23,23 @@ class PendingTraceStore:
     as obstacles to avoid routing through already-placed user traces.
     """
 
-    def __init__(self, grid_resolution: float = 0.025):
+    def __init__(self, grid_resolution: float = 0.025, storage_path: Optional[Path] = None):
         """
         Initialize the pending trace store.
 
         Args:
             grid_resolution: Grid cell size for blocked cell calculation (mm)
+            storage_path: Optional path to JSON file for persistence
         """
         self._traces: dict[str, PendingTrace] = {}
         self._grid_resolution = grid_resolution
+        self._storage_path = storage_path
         # Cache of blocked cells per layer
         self._blocked_cells_cache: dict[str, set[tuple[int, int]]] = {}
+
+        # Load existing traces from storage
+        if self._storage_path:
+            self._load()
 
     def add_trace(
         self,
@@ -61,6 +69,7 @@ class PendingTraceStore:
         self._traces[trace_id] = trace
         # Invalidate cache for this layer
         self._blocked_cells_cache.pop(layer, None)
+        self._save()
 
     def remove_trace(self, trace_id: str) -> bool:
         """
@@ -76,6 +85,7 @@ class PendingTraceStore:
         if trace:
             # Invalidate cache for this layer
             self._blocked_cells_cache.pop(trace.layer, None)
+            self._save()
             return True
         return False
 
@@ -95,6 +105,7 @@ class PendingTraceStore:
         """Remove all pending traces."""
         self._traces.clear()
         self._blocked_cells_cache.clear()
+        self._save()
 
     def get_blocked_cells(
         self,
@@ -233,3 +244,47 @@ class PendingTraceStore:
         proj_x = x1 + t * dx
         proj_y = y1 + t * dy
         return ((px - proj_x) ** 2 + (py - proj_y) ** 2) ** 0.5
+
+    def _save(self) -> None:
+        """Save traces to storage file."""
+        if not self._storage_path:
+            return
+
+        data = {
+            "traces": [
+                {
+                    "id": t.id,
+                    "segments": t.segments,
+                    "width": t.width,
+                    "layer": t.layer,
+                    "net_id": t.net_id,
+                }
+                for t in self._traces.values()
+            ]
+        }
+
+        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._storage_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+    def _load(self) -> None:
+        """Load traces from storage file."""
+        if not self._storage_path or not self._storage_path.exists():
+            return
+
+        try:
+            with open(self._storage_path) as f:
+                data = json.load(f)
+
+            for trace_data in data.get("traces", []):
+                trace = PendingTrace(
+                    id=trace_data["id"],
+                    segments=[tuple(pt) for pt in trace_data["segments"]],
+                    width=trace_data["width"],
+                    layer=trace_data["layer"],
+                    net_id=trace_data.get("net_id"),
+                )
+                self._traces[trace.id] = trace
+        except (json.JSONDecodeError, KeyError) as e:
+            # If file is corrupted, start fresh
+            print(f"Warning: Could not load traces from {self._storage_path}: {e}")

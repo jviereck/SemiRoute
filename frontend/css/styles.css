@@ -184,6 +184,41 @@ body {
     height: 100%;
 }
 
+/* Zoom controls */
+#zoom-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 100;
+}
+
+#zoom-controls button {
+    width: 32px;
+    height: 32px;
+    font-size: 20px;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    background: #3a3a3a;
+    color: #e0e0e0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+#zoom-controls button:hover {
+    background: #4a4a4a;
+}
+
+#zoom-controls button:active {
+    background: #2a2a2a;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
     width: 8px;
