@@ -492,10 +492,36 @@
     let routeAbortController = null;  // AbortController for canceling in-flight requests
     const ROUTE_DEBOUNCE_MS = 50;     // Minimum delay between route requests
 
+    // Companion mode state - routes multiple traces following a reference
+    let companionMode = null;
+    // {
+    //   referenceRoute: {           // The reference trace to follow
+    //     segments: [{path, layer, width}],  // Full path data
+    //     netId: number,
+    //     routeId: string|null      // If user-created route
+    //   },
+    //   companions: [               // Array of companion traces (ordered by selection)
+    //     {
+    //       netId: number,          // Net ID of this companion
+    //       startPoint: {x, y},     // Start point (from clicked pad)
+    //       offsetIndex: number,    // Position in stack (1, 2, 3...)
+    //       currentSegmentIndex: number,  // Which reference segment we're on
+    //       pendingPath: array|null,      // Current preview path
+    //       routeSuccess: boolean,        // Whether last route succeeded
+    //       sessionSegments: [],          // Committed segments for this companion
+    //       sessionVias: [],              // Committed vias for this companion
+    //       routeId: string               // Unique route ID for this companion
+    //     }
+    //   ],
+    //   baseSpacing: number,        // Base offset distance (multiplied by offsetIndex)
+    //   currentLayer: string        // Current routing layer (follows reference)
+    // }
+
     // Expose state for debugging/testing
     window.getRoutingState = () => ({
         isRouting,
         routingSession,
+        companionMode,
         appMode,
         pendingCursorUpdate
     });
@@ -711,7 +737,12 @@
 
         // Double-click: commit and end routing, or select full route
         container.addEventListener('dblclick', (e) => {
-            if (appMode === 'trace' && routingSession) {
+            if (appMode === 'trace' && companionMode && companionMode.companions.length > 0) {
+                // Finish companion routing on double-click
+                e.preventDefault();
+                e.stopPropagation();
+                finishCompanionSession();
+            } else if (appMode === 'trace' && routingSession) {
                 e.preventDefault();
                 e.stopPropagation();
                 handleTraceDoubleClick(e);
@@ -762,9 +793,30 @@
      * Continuously routes to cursor position (debounced).
      */
     function handleTraceMouseMove(e) {
+        const svgPoint = viewer.screenToSVG(e.clientX, e.clientY);
+
+        // Handle companion mode
+        if (companionMode && companionMode.companions.length > 0) {
+            companionMode.cursorPoint = { x: svgPoint.x, y: svgPoint.y };
+
+            if (isRouting) {
+                pendingCursorUpdate = true;
+                return;
+            }
+
+            if (routeDebounceTimer) {
+                clearTimeout(routeDebounceTimer);
+            }
+            routeDebounceTimer = setTimeout(() => {
+                routeDebounceTimer = null;
+                routeCompanionsToCursor();
+            }, ROUTE_DEBOUNCE_MS);
+            return;
+        }
+
+        // Handle normal routing session
         if (!routingSession) return;
 
-        const svgPoint = viewer.screenToSVG(e.clientX, e.clientY);
         routingSession.cursorPoint = { x: svgPoint.x, y: svgPoint.y };
 
         // If currently routing, mark that we have a pending update
@@ -879,14 +931,45 @@
 
     /**
      * Handle single click in trace mode.
-     * - First click: sets start point
+     * - Ctrl+Click on pad with reference selected: add companion
+     * - Click on trace with no session: select as reference
+     * - First click on pad: start normal routing session
      * - Subsequent clicks: commits current segment, click point becomes new start
      */
     async function handleTraceClick(e, clickedElement) {
         const layer = document.getElementById('trace-layer').value;
         const width = parseFloat(document.getElementById('trace-width').value);
         const target = getTargetCoordinates(e, clickedElement);
+        const match = findBestMatchAtPoint(e.clientX, e.clientY);
 
+        // Handle companion mode: Alt+Click on pad adds companion
+        if (e.altKey && companionMode && companionMode.referenceRoute) {
+            if (clickedElement && clickedElement.classList.contains('pad')) {
+                addCompanionTrace(clickedElement);
+                return;
+            }
+        }
+
+        // Handle companion mode: regular click commits segments
+        if (companionMode && companionMode.companions.length > 0) {
+            await commitCompanionSegments();
+            return;
+        }
+
+        // Handle clicking on a trace to select as reference (no active session)
+        // Only allow reference selection when explicitly clicking on a trace/user-trace
+        // and not during any routing activity
+        if (!routingSession && !companionMode && match &&
+            (match.type === 'user-trace' || match.type === 'user-via' || match.type === 'trace')) {
+            // Don't select reference if clicking on a pad (user wants to start normal routing)
+            if (!clickedElement || !clickedElement.classList.contains('pad')) {
+                if (selectReferenceTrace(match)) {
+                    return;
+                }
+            }
+        }
+
+        // Normal routing mode
         if (!routingSession) {
             // First click - start routing session
             const startNet = clickedElement ? parseInt(clickedElement.dataset.net, 10) : null;
@@ -938,11 +1021,14 @@
      * Handle double-click in trace mode.
      * Commits current segment and ends routing.
      */
+    /**
+     * Commits current segment and ends routing.
+     */
     async function handleTraceDoubleClick(e) {
         if (!routingSession) return;
 
         const bestMatch = findBestMatchAtPoint(e.clientX, e.clientY);
-        const target = getTargetCoordinates(e, bestMatch);
+        const target = getTargetCoordinates(e, bestMatch ? bestMatch.element : null);
 
         // Route to double-click point
         routingSession.cursorPoint = { x: target.x, y: target.y };
@@ -1072,7 +1158,7 @@
         if (segmentCount > 0) {
             const route = {
                 id: routingSession.routeId,
-                segments: routingSession.sessionSegments,
+                segments: [...routingSession.sessionSegments],
                 netId: routingSession.startNet,
                 visible: true
             };
@@ -1157,18 +1243,536 @@
         updateTraceStatus('Click a pad to start', '');
     }
 
+    // ==================== COMPANION MODE FUNCTIONS ====================
+
+    /**
+     * Select a trace as the reference for companion routing.
+     * @param {Object} match - The match object from findBestMatchAtPoint
+     * @returns {boolean} True if reference was selected
+     */
+    function selectReferenceTrace(match) {
+        if (!match) return false;
+
+        let referenceRoute = null;
+
+        if (match.type === 'user-trace' || match.type === 'user-via') {
+            // User-created route - extract from userRoutes
+            const routeId = match.element.dataset.traceId;
+            const route = userRoutes.find(r => r.id === routeId);
+            if (!route || route.segments.length === 0) {
+                showTraceError('Route has no segments');
+                return false;
+            }
+            referenceRoute = {
+                segments: route.segments,
+                netId: route.netId,
+                routeId: routeId
+            };
+        } else if (match.type === 'trace') {
+            // PCB board trace - need to fetch connected path from backend
+            const netId = parseInt(match.element.dataset.net, 10);
+            const layer = match.element.dataset.layer;
+
+            // Get approximate click position from the trace
+            const pathData = match.element.getAttribute('d');
+            const firstPoint = extractFirstPointFromPath(pathData);
+
+            if (!firstPoint) {
+                showTraceError('Could not determine trace start');
+                return false;
+            }
+
+            // For PCB traces, we'll fetch the full path asynchronously
+            fetchTracePathAndStartCompanion(netId, layer, firstPoint.x, firstPoint.y);
+            return true;
+        } else {
+            return false;
+        }
+
+        // Initialize companion mode with this reference
+        initCompanionMode(referenceRoute);
+        return true;
+    }
+
+    /**
+     * Extract the first point from an SVG path data string.
+     */
+    function extractFirstPointFromPath(pathData) {
+        if (!pathData) return null;
+        const match = pathData.match(/M\s*([\d.-]+)[,\s]+([\d.-]+)/i);
+        if (match) {
+            return { x: parseFloat(match[1]), y: parseFloat(match[2]) };
+        }
+        return null;
+    }
+
+    /**
+     * Fetch connected trace path from backend and start companion mode.
+     */
+    async function fetchTracePathAndStartCompanion(netId, layer, x, y) {
+        try {
+            const response = await fetch(`/api/trace-path/${netId}?layer=${encodeURIComponent(layer)}&x=${x}&y=${y}`);
+            const data = await response.json();
+
+            if (!data.success || !data.path || data.path.length < 2) {
+                showTraceError('Could not reconstruct trace path');
+                return;
+            }
+
+            // Build reference route from path
+            const width = parseFloat(document.getElementById('trace-width').value);
+            const referenceRoute = {
+                segments: [{
+                    path: data.path,
+                    layer: layer,
+                    width: data.width || width
+                }],
+                netId: netId,
+                routeId: null
+            };
+
+            initCompanionMode(referenceRoute);
+        } catch (error) {
+            console.error('Failed to fetch trace path:', error);
+            showTraceError('Failed to fetch trace path');
+        }
+    }
+
+    /**
+     * Initialize companion mode with a reference route.
+     */
+    function initCompanionMode(referenceRoute) {
+        const spacing = parseFloat(document.getElementById('companion-spacing')?.value || '0.4');
+
+        companionMode = {
+            referenceRoute: referenceRoute,
+            companions: [],
+            baseSpacing: spacing,
+            currentLayer: referenceRoute.segments[0]?.layer || 'F.Cu'
+        };
+
+        // Highlight the reference trace
+        if (referenceRoute.routeId) {
+            viewer.highlightReferenceTrace(referenceRoute.routeId);
+        }
+
+        updateCompanionStatus();
+        updateTraceStatus('Reference selected. Ctrl+Click pads to add companions', 'routing');
+    }
+
+    /**
+     * Add a companion trace from a clicked pad.
+     * @param {Element} clickedElement - The pad element that was Ctrl+clicked
+     */
+    function addCompanionTrace(clickedElement) {
+        if (!companionMode) return;
+
+        const netId = parseInt(clickedElement.dataset.net, 10);
+
+        // Prevent duplicate nets
+        if (companionMode.companions.some(c => c.netId === netId)) {
+            showTraceError('This net is already a companion');
+            return;
+        }
+
+        // Prevent same net as reference
+        if (netId === companionMode.referenceRoute.netId) {
+            showTraceError('Cannot add reference net as companion');
+            return;
+        }
+
+        // Get pad coordinates
+        const padX = parseFloat(clickedElement.dataset.x || clickedElement.getAttribute('cx'));
+        const padY = parseFloat(clickedElement.dataset.y || clickedElement.getAttribute('cy'));
+
+        if (isNaN(padX) || isNaN(padY)) {
+            showTraceError('Could not determine pad position');
+            return;
+        }
+
+        const width = parseFloat(document.getElementById('trace-width').value);
+
+        companionMode.companions.push({
+            netId: netId,
+            startPoint: { x: padX, y: padY },
+            offsetIndex: companionMode.companions.length + 1,  // 1-based
+            currentSegmentIndex: 0,
+            pendingPath: null,
+            routeSuccess: true,
+            sessionSegments: [],
+            sessionVias: [],
+            routeId: generateRouteId(),
+            width: width
+        });
+
+        // Show start marker for this companion
+        viewer.showCompanionStartMarker(padX, padY, companionMode.companions.length);
+
+        updateCompanionStatus();
+        hideTraceError();
+
+        // Show trace actions if we have companions
+        if (companionMode.companions.length > 0) {
+            document.getElementById('trace-actions').classList.remove('hidden');
+        }
+    }
+
+    /**
+     * Update the companion status display.
+     */
+    function updateCompanionStatus() {
+        const statusEl = document.getElementById('companion-status');
+        const refEl = document.getElementById('reference-net');
+        const listEl = document.getElementById('companion-net-list');
+
+        if (!statusEl) return;
+
+        if (!companionMode) {
+            statusEl.classList.add('hidden');
+            return;
+        }
+
+        statusEl.classList.remove('hidden');
+
+        if (refEl) {
+            const refNetName = companionMode.referenceRoute.netId ?
+                `Net ${companionMode.referenceRoute.netId}` : 'Unknown';
+            refEl.textContent = refNetName;
+        }
+
+        if (listEl) {
+            if (companionMode.companions.length === 0) {
+                listEl.innerHTML = '<span class="hint">(none)</span>';
+            } else {
+                const badges = companionMode.companions.map((c, i) =>
+                    `<span class="companion-net-badge">${i + 1}. Net ${c.netId}</span>`
+                ).join('');
+                listEl.innerHTML = badges;
+            }
+        }
+    }
+
+    /**
+     * Route all companions to the current cursor position.
+     * Calculates offset positions along the reference path.
+     */
+    async function routeCompanionsToCursor() {
+        if (!companionMode || companionMode.companions.length === 0) return;
+        if (isRouting) {
+            pendingCursorUpdate = true;
+            return;
+        }
+        if (viewer.isZooming) return;
+
+        isRouting = true;
+        pendingCursorUpdate = false;
+
+        try {
+            // Get reference path for the current segment
+            const refSegment = companionMode.referenceRoute.segments[0];
+            if (!refSegment || !refSegment.path || refSegment.path.length < 2) {
+                return;
+            }
+
+            const cursorPoint = companionMode.cursorPoint;
+            if (!cursorPoint) return;
+
+            // Find closest point on reference path to cursor
+            const { point: refPoint, direction } = findClosestPointOnPath(refSegment.path, cursorPoint);
+
+            // Calculate perpendicular direction for offsets
+            const perpX = -direction.y;
+            const perpY = direction.x;
+
+            // Route each companion
+            const routePromises = companionMode.companions.map(async (companion, index) => {
+                // Calculate offset target point
+                const offset = companionMode.baseSpacing * companion.offsetIndex;
+                const targetX = refPoint.x + perpX * offset;
+                const targetY = refPoint.y + perpY * offset;
+
+                try {
+                    const response = await fetch('/api/route', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            start_x: companion.startPoint.x,
+                            start_y: companion.startPoint.y,
+                            end_x: targetX,
+                            end_y: targetY,
+                            layer: companionMode.currentLayer,
+                            width: companion.width,
+                            net_id: companion.netId
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success && data.path.length > 0) {
+                        companion.pendingPath = data.path;
+                        companion.routeSuccess = true;
+                    } else {
+                        companion.pendingPath = null;
+                        companion.routeSuccess = false;
+                    }
+                } catch (error) {
+                    if (error.name !== 'AbortError') {
+                        console.error(`Companion ${index} routing error:`, error);
+                    }
+                    companion.pendingPath = null;
+                    companion.routeSuccess = false;
+                }
+            });
+
+            await Promise.all(routePromises);
+
+            // Render all companion previews
+            if (companionMode) {
+                viewer.clearCompanionPreviews();
+                for (const companion of companionMode.companions) {
+                    if (companion.pendingPath) {
+                        viewer.renderCompanionPreview(
+                            companion.pendingPath,
+                            companionMode.currentLayer,
+                            companion.width,
+                            companion.routeSuccess
+                        );
+                    }
+                }
+            }
+
+        } finally {
+            isRouting = false;
+
+            // Chain next request if cursor moved
+            if (pendingCursorUpdate && companionMode) {
+                pendingCursorUpdate = false;
+                if (routeDebounceTimer) {
+                    clearTimeout(routeDebounceTimer);
+                }
+                routeDebounceTimer = setTimeout(() => {
+                    routeDebounceTimer = null;
+                    routeCompanionsToCursor();
+                }, ROUTE_DEBOUNCE_MS);
+            }
+        }
+    }
+
+    /**
+     * Find the closest point on a path to a target point.
+     * Returns the point and the direction vector at that point.
+     */
+    function findClosestPointOnPath(path, target) {
+        let closestPoint = { x: path[0][0], y: path[0][1] };
+        let closestDist = Infinity;
+        let direction = { x: 1, y: 0 };
+
+        for (let i = 0; i < path.length - 1; i++) {
+            const p1 = { x: path[i][0], y: path[i][1] };
+            const p2 = { x: path[i + 1][0], y: path[i + 1][1] };
+
+            // Find closest point on segment
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const lengthSq = dx * dx + dy * dy;
+
+            if (lengthSq < 0.0001) continue;
+
+            const t = Math.max(0, Math.min(1,
+                ((target.x - p1.x) * dx + (target.y - p1.y) * dy) / lengthSq
+            ));
+
+            const projX = p1.x + t * dx;
+            const projY = p1.y + t * dy;
+            const dist = Math.sqrt((target.x - projX) ** 2 + (target.y - projY) ** 2);
+
+            if (dist < closestDist) {
+                closestDist = dist;
+                closestPoint = { x: projX, y: projY };
+                // Normalize direction
+                const length = Math.sqrt(lengthSq);
+                direction = { x: dx / length, y: dy / length };
+            }
+        }
+
+        return { point: closestPoint, direction };
+    }
+
+    /**
+     * Commit current segments for all companions.
+     */
+    async function commitCompanionSegments() {
+        if (!companionMode || companionMode.companions.length === 0) return;
+
+        for (const companion of companionMode.companions) {
+            if (companion.pendingPath && companion.routeSuccess) {
+                const segmentIndex = companion.sessionSegments.length;
+
+                const segment = {
+                    path: companion.pendingPath,
+                    layer: companionMode.currentLayer,
+                    width: companion.width
+                };
+                companion.sessionSegments.push(segment);
+
+                // Render as confirmed
+                viewer.confirmPendingTrace(
+                    segment.path,
+                    segment.layer,
+                    segment.width,
+                    companion.routeId,
+                    segmentIndex
+                );
+
+                // Update start point to end of committed path
+                const lastPoint = companion.pendingPath[companion.pendingPath.length - 1];
+                companion.startPoint = { x: lastPoint[0], y: lastPoint[1] };
+                companion.pendingPath = null;
+            }
+        }
+
+        viewer.clearCompanionPreviews();
+        updateTraceStatus('Companion segments committed', 'success');
+    }
+
+    /**
+     * Handle layer switch for all companions - place vias and switch layer.
+     */
+    async function handleCompanionLayerSwitch(newLayer) {
+        if (!companionMode || companionMode.companions.length === 0) return;
+        if (newLayer === companionMode.currentLayer) return;
+
+        const viaSize = 0.8;
+
+        // First commit any pending paths
+        await commitCompanionSegments();
+
+        // Place vias for all companions at their current positions
+        for (const companion of companionMode.companions) {
+            const { x, y } = companion.startPoint;
+
+            // Check via placement
+            try {
+                const response = await fetch('/api/check-via', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        x: x,
+                        y: y,
+                        size: viaSize,
+                        drill: 0.4,
+                        net_id: companion.netId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!data.valid) {
+                    showTraceError(`Via blocked for companion ${companion.offsetIndex}: ${data.message}`);
+                    continue;
+                }
+
+                // Get segment index for the via
+                const viaSegmentIndex = companion.sessionSegments.length - 1;
+
+                // Place via
+                companion.sessionVias.push({ x, y, size: viaSize });
+                viewer.renderUserVia(x, y, viaSize, false, companion.routeId, viaSegmentIndex);
+
+            } catch (error) {
+                console.error('Via check error for companion:', error);
+            }
+        }
+
+        // Switch layer for all companions
+        companionMode.currentLayer = newLayer;
+        document.getElementById('trace-layer').value = newLayer;
+
+        updateTraceStatus(`Vias placed, now on ${newLayer}`, 'success');
+        hideTraceError();
+    }
+
+    /**
+     * Finish companion routing session - keep all committed traces.
+     */
+    function finishCompanionSession() {
+        if (!companionMode) return;
+
+        viewer.clearCompanionPreviews();
+        viewer.clearReferenceHighlight();
+
+        let totalSegments = 0;
+        let totalVias = 0;
+
+        // Create route entries for each companion
+        for (const companion of companionMode.companions) {
+            if (companion.sessionSegments.length > 0) {
+                const route = {
+                    id: companion.routeId,
+                    segments: companion.sessionSegments,
+                    netId: companion.netId,
+                    visible: true
+                };
+                userRoutes.push(route);
+                addRouteToList(route);
+                totalSegments += companion.sessionSegments.length;
+                totalVias += companion.sessionVias.length;
+            }
+        }
+
+        updateTraceStatus(`Done: ${companionMode.companions.length} companions, ${totalSegments} segments, ${totalVias} vias`, 'success');
+
+        companionMode = null;
+        updateCompanionStatus();
+        document.getElementById('trace-actions').classList.add('hidden');
+    }
+
+    /**
+     * Cancel companion routing session - remove all traces.
+     */
+    function cancelCompanionSession() {
+        if (!companionMode) return;
+
+        // Remove all SVG elements for each companion
+        for (const companion of companionMode.companions) {
+            if (companion.sessionSegments.length > 0 || companion.sessionVias.length > 0) {
+                viewer.removeTraceById(companion.routeId);
+            }
+        }
+
+        viewer.clearCompanionPreviews();
+        viewer.clearReferenceHighlight();
+        viewer.clearPendingElements();
+
+        updateTraceStatus('Companion routing cancelled', '');
+
+        companionMode = null;
+        updateCompanionStatus();
+        document.getElementById('trace-actions').classList.add('hidden');
+    }
+
+    // ==================== END COMPANION MODE FUNCTIONS ====================
+
     /**
      * Confirm button: finish routing and keep traces.
      */
     function confirmTrace() {
-        finishRoutingSession();
+        if (companionMode) {
+            finishCompanionSession();
+        } else {
+            finishRoutingSession();
+        }
     }
 
     /**
      * Cancel button: undo all traces from this session.
      */
     function cancelTrace() {
-        cancelRoutingSession();
+        if (companionMode) {
+            cancelCompanionSession();
+        } else {
+            cancelRoutingSession();
+        }
     }
 
     /**
@@ -1338,7 +1942,10 @@
             }
 
             if (e.key === 'Escape') {
-                if (appMode === 'trace' && routingSession) {
+                if (appMode === 'trace' && companionMode) {
+                    // Cancel companion routing
+                    cancelCompanionSession();
+                } else if (appMode === 'trace' && routingSession) {
                     // Cancel routing - remove all traces from this session
                     cancelRoutingSession();
                 } else if (appMode === 'trace') {
@@ -1359,6 +1966,9 @@
                 }
             } else if (e.key === 't' || e.key === 'T') {
                 toggleTraceMode();
+            } else if (appMode === 'trace' && companionMode && companionMode.companions.length > 0 && layerMap[e.key]) {
+                // Companion mode layer switching with via
+                handleCompanionLayerSwitch(layerMap[e.key]);
             } else if (appMode === 'trace' && routingSession && layerMap[e.key]) {
                 // Layer switching with via (1=F.Cu, 2=B.Cu, 3=In1.Cu, 4=In2.Cu)
                 handleLayerSwitch(layerMap[e.key]);

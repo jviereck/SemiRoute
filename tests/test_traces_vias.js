@@ -2,7 +2,7 @@
  * Test cases for trace and via rendering and highlighting.
  */
 const puppeteer = require('puppeteer');
-const { SERVER_URL } = require('./config');
+const { SERVER_URL } = require('./config_test');
 
 // Test results
 const results = {

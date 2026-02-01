@@ -2,7 +2,7 @@
  * Test to investigate layer switching delay.
  */
 const puppeteer = require('puppeteer');
-const { SERVER_URL } = require('./config');
+const { SERVER_URL } = require('./config_test');
 
 async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -12,9 +12,9 @@ async function runTest() {
     console.log('Starting layer switch timing test...');
 
     const browser = await puppeteer.launch({
-        headless: false,
-        devtools: true,
-        args: ['--window-size=1400,900']
+        headless: true,
+        devtools: false,
+        args: ['--window-size=1400,900', '--no-sandbox', '--disable-setuid-sandbox']
     });
 
     const page = await browser.newPage();
@@ -165,11 +165,8 @@ async function runTest() {
         });
         console.log(`Route API took: ${routeTiming.duration.toFixed(2)}ms, success: ${routeTiming.success}`);
 
-        console.log('\nTest complete. Browser left open for inspection.');
-        console.log('Press Ctrl+C to close.');
-
-        // Keep browser open
-        await new Promise(() => {});
+        console.log('\n--- Test Complete ---');
+        await browser.close();
 
     } catch (err) {
         console.error('Test error:', err);
