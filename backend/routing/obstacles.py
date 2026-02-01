@@ -228,7 +228,7 @@ class ObstacleMap:
                     item.width + self.clearance * 2
                 )
 
-    def is_blocked(self, x: float, y: float, radius: float = 0) -> bool:
+    def is_blocked(self, x: float, y: float, radius: float = 0, net_id=None) -> bool:
         """
         Check if a position is blocked.
 
@@ -236,6 +236,7 @@ class ObstacleMap:
             x: World X coordinate
             y: World Y coordinate
             radius: Additional radius to check (for trace width)
+            net_id: Optional net ID (ignored in legacy ObstacleMap, for API compatibility)
 
         Returns:
             True if position is blocked

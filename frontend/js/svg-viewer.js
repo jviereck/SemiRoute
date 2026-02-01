@@ -853,7 +853,7 @@ class SVGViewer {
     showCompanionStartMarker(x, y, index) {
         if (!this.svg) return;
 
-        const size = 0.5;
+        const size = 0.3;
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.setAttribute('class', 'companion-start-marker pending-element');
 
@@ -865,7 +865,7 @@ class SVGViewer {
         circle.setAttribute('fill', '#FF9800');
         circle.setAttribute('fill-opacity', '0.8');
         circle.setAttribute('stroke', '#FFF');
-        circle.setAttribute('stroke-width', '0.1');
+        circle.setAttribute('stroke-width', '0.05');
 
         // Number text
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -873,7 +873,7 @@ class SVGViewer {
         text.setAttribute('y', y);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'central');
-        text.setAttribute('font-size', '0.6');
+        text.setAttribute('font-size', '0.35');
         text.setAttribute('font-weight', 'bold');
         text.setAttribute('fill', '#000');
         text.textContent = index.toString();

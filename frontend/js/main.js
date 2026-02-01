@@ -854,7 +854,7 @@
         }
         routeDebounceTimer = setTimeout(() => {
             routeDebounceTimer = null;
-            routeToCursor();
+            routeToCursor(true);  // Skip endpoint check for mouse move preview
         }, ROUTE_DEBOUNCE_MS);
     }
 
@@ -890,7 +890,11 @@
      * Route from start point to current cursor position.
      * Chains requests: starts next route as soon as previous completes.
      */
-    async function routeToCursor() {
+    /**
+     * Route from current start point to cursor position.
+     * @param {boolean} skipEndpointCheck - If true, skip the different-net endpoint check
+     */
+    async function routeToCursor(skipEndpointCheck = false) {
         if (!routingSession || !routingSession.cursorPoint) return;
         if (isRouting) return;  // Already routing
         if (viewer.isZooming) return;  // Don't route while zooming (prevents lag)
@@ -926,7 +930,8 @@
                     end_y: cursorPoint.y,
                     layer: routingSession.currentLayer,
                     width: routingSession.width,
-                    net_id: routingSession.startNet
+                    net_id: routingSession.startNet,
+                    skip_endpoint_check: skipEndpointCheck
                 }),
                 signal: routeAbortController.signal
             });
@@ -944,11 +949,18 @@
 
                     hideTraceError();
                 } else {
+                    console.log('Route failed:', {
+                        from: startPoint,
+                        to: cursorPoint,
+                        layer: routingSession.currentLayer,
+                        net: routingSession.startNet,
+                        message: data.message
+                    });
                     routingSession.pendingPath = null;
                     viewer.clearPendingTrace();
 
-                    // Show error message if routing failed due to different net
-                    if (data.message && data.message.toLowerCase().includes('different net')) {
+                    // Show error message for routing failures
+                    if (data.message) {
                         showTraceError(data.message);
                     }
                 }
@@ -974,7 +986,7 @@
                 }
                 routeDebounceTimer = setTimeout(() => {
                     routeDebounceTimer = null;
-                    routeToCursor();
+                    routeToCursor(true);  // Skip endpoint check for mouse move preview
                 }, ROUTE_DEBOUNCE_MS);
             }
         }
@@ -990,19 +1002,32 @@
     async function handleTraceClick(e, clickedElement) {
         const layer = document.getElementById('trace-layer').value;
         const width = parseFloat(document.getElementById('trace-width').value);
-        const target = getTargetCoordinates(e, clickedElement);
         const match = findBestMatchAtPoint(e.clientX, e.clientY);
 
-        // Handle companion mode: Alt+Click on pad adds companion
-        if (e.altKey && companionMode && companionMode.referenceRoute) {
-            if (clickedElement && clickedElement.classList.contains('pad')) {
-                addCompanionTrace(clickedElement);
-                return;
-            } else {
-                // Alt+Click on non-pad in companion mode - ignore (don't start new routing)
-                showTraceError('Alt+Click on a pad to add a companion');
-                return;
+        // When routing, only snap to same-net pads (avoid snapping to different-net pads)
+        let snapElement = clickedElement;
+        if (routingSession && routingSession.startNet) {
+            const clickedNet = clickedElement ? parseInt(clickedElement.dataset.net, 10) : null;
+            if (clickedNet && clickedNet !== routingSession.startNet) {
+                // Different net - don't snap to this pad, use raw cursor position
+                snapElement = null;
             }
+        }
+        const target = getTargetCoordinates(e, snapElement);
+
+        // Handle companion mode: Alt+Click on pad/via/trace adds companion
+        if (e.altKey && companionMode && companionMode.referenceRoute) {
+            if (match && (match.type === 'pad' || match.type === 'via' || match.type === 'trace' ||
+                          match.type === 'user-trace' || match.type === 'user-via')) {
+                const netId = parseInt(match.element.dataset.net, 10);
+                if (netId > 0) {
+                    addCompanionTrace(match.element, target);
+                    return;
+                }
+            }
+            // Alt+Click on element without net - show error
+            showTraceError('Alt+Click on a pad, via, or trace to add a companion');
+            return;
         }
 
         // Handle companion mode: regular click commits segments
@@ -1084,7 +1109,9 @@
             routingSession.cursorPoint = { x: target.x, y: target.y };
 
             // Route to click point and commit
-            await routeToCursor();
+            // Skip endpoint check if we didn't snap to a pad (snapElement is null)
+            const skipEndpointCheck = (snapElement === null);
+            await routeToCursor(skipEndpointCheck);
             await commitCurrentSegment(target.x, target.y);
         }
     }
@@ -1110,15 +1137,38 @@
         }
 
         const bestMatch = findBestMatchAtPoint(e.clientX, e.clientY);
-        const target = getTargetCoordinates(e, bestMatch ? bestMatch.element : null);
+
+        // Only snap to same-net pads when ending route
+        let snapElement = bestMatch ? bestMatch.element : null;
+        if (routingSession.startNet && snapElement) {
+            const matchNet = parseInt(snapElement.dataset.net, 10);
+            if (matchNet && matchNet !== routingSession.startNet) {
+                // Different net - don't snap, use raw cursor position
+                snapElement = null;
+            }
+        }
+        const target = getTargetCoordinates(e, snapElement);
+
+        console.log('Double-click to commit:', {
+            target: target,
+            bestMatch: bestMatch ? { type: bestMatch.type, net: bestMatch.element?.dataset?.net } : null,
+            snappedTo: snapElement ? 'same-net pad' : 'cursor position',
+            currentStart: routingSession.startPoint,
+            previousCursor: routingSession.cursorPoint,
+            hadPendingPath: !!routingSession.pendingPath
+        });
 
         // Route to double-click point
+        // Skip endpoint check if we didn't snap to a pad (snapElement is null)
+        const skipEndpointCheck = (snapElement === null);
         routingSession.cursorPoint = { x: target.x, y: target.y };
-        await routeToCursor();
+        await routeToCursor(skipEndpointCheck);
 
         // Commit if there's a path
         if (routingSession.pendingPath) {
             await commitCurrentSegment(target.x, target.y);
+        } else {
+            console.log('Double-click: No path found, cannot commit');
         }
 
         // End routing session (keep committed traces)
@@ -1441,15 +1491,23 @@
             viewer.highlightReferenceByNet(referenceRoute.netId, referenceRoute.segments[0]?.layer);
         }
 
+        console.log('Reference selected:', {
+            netId: referenceRoute.netId,
+            segments: referenceRoute.segments.length,
+            firstSegmentPath: referenceRoute.segments[0]?.path?.length || 0,
+            layer: companionMode.currentLayer
+        });
+
         updateCompanionStatus();
-        updateTraceStatus('Reference selected. Alt+Click pads to add companions', 'routing');
+        updateTraceStatus('Reference selected. Alt+Click pad/via/trace to add companions', 'routing');
     }
 
     /**
-     * Add a companion trace from a clicked pad.
-     * @param {Element} clickedElement - The pad element that was Alt+clicked
+     * Add a companion trace from a clicked element (pad, via, or trace).
+     * @param {Element} clickedElement - The element that was Alt+clicked
+     * @param {Object} clickTarget - The click target coordinates {x, y}
      */
-    function addCompanionTrace(clickedElement) {
+    function addCompanionTrace(clickedElement, clickTarget) {
         if (!companionMode) return;
 
         const netId = parseInt(clickedElement.dataset.net, 10);
@@ -1466,20 +1524,26 @@
             return;
         }
 
-        // Get pad coordinates
-        const padX = parseFloat(clickedElement.dataset.x || clickedElement.getAttribute('cx'));
-        const padY = parseFloat(clickedElement.dataset.y || clickedElement.getAttribute('cy'));
+        // Get coordinates - try element attributes first, then use click position
+        let startX = parseFloat(clickedElement.dataset.x || clickedElement.getAttribute('cx'));
+        let startY = parseFloat(clickedElement.dataset.y || clickedElement.getAttribute('cy'));
 
-        if (isNaN(padX) || isNaN(padY)) {
-            showTraceError('Could not determine pad position');
-            return;
+        // For traces or if element coords unavailable, use click target position
+        if (isNaN(startX) || isNaN(startY)) {
+            if (clickTarget) {
+                startX = clickTarget.x;
+                startY = clickTarget.y;
+            } else {
+                showTraceError('Could not determine start position');
+                return;
+            }
         }
 
         const width = parseFloat(document.getElementById('trace-width').value);
 
         companionMode.companions.push({
             netId: netId,
-            startPoint: { x: padX, y: padY },
+            startPoint: { x: startX, y: startY },
             offsetIndex: companionMode.companions.length + 1,  // 1-based
             currentSegmentIndex: 0,
             pendingPath: null,
@@ -1491,7 +1555,9 @@
         });
 
         // Show start marker for this companion
-        viewer.showCompanionStartMarker(padX, padY, companionMode.companions.length);
+        viewer.showCompanionStartMarker(startX, startY, companionMode.companions.length);
+
+        console.log(`Added companion ${companionMode.companions.length}: net=${netId}, start=(${startX.toFixed(2)}, ${startY.toFixed(2)})`);
 
         updateCompanionStatus();
         hideTraceError();
@@ -1571,10 +1637,23 @@
 
             // Route each companion
             const routePromises = companionMode.companions.map(async (companion, index) => {
-                // Calculate offset target point
-                const offset = companionMode.baseSpacing * companion.offsetIndex;
+                // Determine which side of the reference the companion's start point is on
+                // by computing the cross product: (start - refPoint) × direction
+                const toStartX = companion.startPoint.x - refPoint.x;
+                const toStartY = companion.startPoint.y - refPoint.y;
+                const crossProduct = toStartX * direction.y - toStartY * direction.x;
+
+                // If cross product > 0, start is on the "positive perpendicular" side
+                // If cross product < 0, start is on the "negative perpendicular" side
+                // Use the same side for offset to avoid crossing the reference
+                const offsetSign = crossProduct >= 0 ? 1 : -1;
+
+                // Calculate offset target point on the same side as start point
+                const offset = companionMode.baseSpacing * companion.offsetIndex * offsetSign;
                 const targetX = refPoint.x + perpX * offset;
                 const targetY = refPoint.y + perpY * offset;
+
+                console.log(`Companion ${index}: routing from (${companion.startPoint.x.toFixed(2)}, ${companion.startPoint.y.toFixed(2)}) to (${targetX.toFixed(2)}, ${targetY.toFixed(2)}), net=${companion.netId}, layer=${companionMode.currentLayer}`);
 
                 try {
                     const response = await fetch('/api/route', {
@@ -1587,7 +1666,8 @@
                             end_y: targetY,
                             layer: companionMode.currentLayer,
                             width: companion.width,
-                            net_id: companion.netId
+                            net_id: companion.netId,
+                            skip_endpoint_check: true  // Companion routing to arbitrary offset points
                         })
                     });
 
@@ -1596,9 +1676,11 @@
                     if (data.success && data.path.length > 0) {
                         companion.pendingPath = data.path;
                         companion.routeSuccess = true;
+                        console.log(`Companion ${index}: route SUCCESS, ${data.path.length} waypoints`);
                     } else {
                         companion.pendingPath = null;
                         companion.routeSuccess = false;
+                        console.log(`Companion ${index}: route FAILED - ${data.message || 'no path found'}`);
                     }
                 } catch (error) {
                     if (error.name !== 'AbortError') {

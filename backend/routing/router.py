@@ -133,6 +133,24 @@ class TraceRouter:
             allowed_net_id=net_id
         )
 
+    def get_obstacle_map(self, layer: str, net_id: Optional[int] = None):
+        """
+        Get obstacle map for a layer (public API).
+
+        Returns ElementAwareMap if use_element_aware=True, else ObstacleMap.
+        """
+        if self.use_element_aware:
+            if layer not in self._element_aware_cache:
+                self._element_aware_cache[layer] = ElementAwareMap(
+                    parser=self.parser,
+                    layer=layer,
+                    clearance=self.clearance,
+                    grid_resolution=self.grid_resolution
+                )
+            return self._element_aware_cache[layer]
+        else:
+            return self._get_obstacle_map(layer, net_id)
+
     def route(
         self,
         start_x: float,
