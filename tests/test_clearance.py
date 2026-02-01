@@ -4,6 +4,8 @@ import math
 
 from backend.pcb.parser import PCBParser
 from backend.routing import TraceRouter, ObstacleMap, GeometryChecker
+from backend.routing.hulls import Point
+from backend.routing.hull_map import HullMap
 from backend.config import DEFAULT_PCB_FILE
 
 
@@ -356,3 +358,122 @@ class TestObstacleMapCorrectness:
         # At minimum, the pad center must be blocked
         assert obstacle_map.is_blocked(test_pad.x, test_pad.y, radius=trace_radius), \
             "Pad center should be blocked even with trace radius"
+
+
+class TestHullGeneration:
+    """Test that hulls are correctly generated for various pad shapes."""
+
+    def test_rotated_oval_pad_hull_bounds(self, parser):
+        """
+        Test that rotated oval pads have correct hull dimensions.
+
+        J4 pad 2 is a 1.7x2.0mm oval with -90° rotation.
+        After rotation, effective dimensions are 2.0x1.7mm.
+        With 0.2mm clearance, the hull should extend:
+        - X: center ± (2.0/2 + 0.2) = center ± 1.2mm
+        - Y: center ± (1.7/2 + 0.2) = center ± 1.05mm
+        """
+        # Find J4 pad 2
+        j4_pad2 = None
+        for pad in parser.pads:
+            if pad.footprint_ref == 'J4' and pad.name == '2':
+                j4_pad2 = pad
+                break
+
+        if j4_pad2 is None:
+            pytest.skip("J4 pad 2 not found in test PCB")
+
+        # Verify it's a rotated oval
+        assert j4_pad2.shape == 'oval', f"Expected oval, got {j4_pad2.shape}"
+        assert abs(abs(j4_pad2.angle) - 90) < 1, f"Expected ~90° rotation, got {j4_pad2.angle}°"
+
+        # Create hull map
+        layer = 'F.Cu' if 'F.Cu' in j4_pad2.layers else list(j4_pad2.layers)[0]
+        clearance = 0.2
+        hull_map = HullMap(parser, layer, clearance=clearance)
+
+        # Find the hull for J4 pad 2
+        j4_hull = None
+        for indexed in hull_map.all_hulls():
+            if indexed.source_type == 'pad' and indexed.source == j4_pad2:
+                j4_hull = indexed
+                break
+
+        assert j4_hull is not None, "Hull for J4 pad 2 not found"
+
+        # Calculate expected bounds
+        # For -90° rotation: width (1.7) becomes height, height (2.0) becomes width
+        eff_width = j4_pad2.height  # 2.0mm after rotation
+        eff_height = j4_pad2.width  # 1.7mm after rotation
+
+        expected_half_x = eff_width / 2 + clearance  # 1.0 + 0.2 = 1.2mm
+        expected_half_y = eff_height / 2 + clearance  # 0.85 + 0.2 = 1.05mm
+
+        expected_min_x = j4_pad2.x - expected_half_x
+        expected_max_x = j4_pad2.x + expected_half_x
+        expected_min_y = j4_pad2.y - expected_half_y
+        expected_max_y = j4_pad2.y + expected_half_y
+
+        # Allow small tolerance for hull approximation
+        tolerance = 0.05
+
+        print(f"\nJ4 pad 2: center=({j4_pad2.x:.3f}, {j4_pad2.y:.3f})")
+        print(f"  Original: {j4_pad2.width}x{j4_pad2.height}mm, angle={j4_pad2.angle}°")
+        print(f"  Effective after rotation: {eff_width}x{eff_height}mm")
+        print(f"  Expected hull X: [{expected_min_x:.3f}, {expected_max_x:.3f}]")
+        print(f"  Actual hull X:   [{j4_hull.min_x:.3f}, {j4_hull.max_x:.3f}]")
+        print(f"  Expected hull Y: [{expected_min_y:.3f}, {expected_max_y:.3f}]")
+        print(f"  Actual hull Y:   [{j4_hull.min_y:.3f}, {j4_hull.max_y:.3f}]")
+
+        # Check X bounds
+        assert abs(j4_hull.min_x - expected_min_x) < tolerance, \
+            f"Hull min_x {j4_hull.min_x:.3f} != expected {expected_min_x:.3f}"
+        assert abs(j4_hull.max_x - expected_max_x) < tolerance, \
+            f"Hull max_x {j4_hull.max_x:.3f} != expected {expected_max_x:.3f}"
+
+        # Check Y bounds
+        assert abs(j4_hull.min_y - expected_min_y) < tolerance, \
+            f"Hull min_y {j4_hull.min_y:.3f} != expected {expected_min_y:.3f}"
+        assert abs(j4_hull.max_y - expected_max_y) < tolerance, \
+            f"Hull max_y {j4_hull.max_y:.3f} != expected {expected_max_y:.3f}"
+
+    def test_segment_hull_semicircle_caps(self):
+        """
+        Test that segment hulls have proper semicircular caps.
+
+        The caps should extend the full radius beyond the segment endpoints.
+        """
+        from backend.routing.hulls import HullGenerator, Point
+
+        # Create a horizontal segment hull
+        start = Point(0, 0)
+        end = Point(10, 0)
+        width = 2.0
+        clearance = 0.2
+        half_width = width / 2 + clearance  # 1.2mm
+
+        chain = HullGenerator.segment_hull(start, end, width, clearance)
+
+        # Find the extreme X points (should be at caps)
+        min_x = min(p.x for p in chain.points)
+        max_x = max(p.x for p in chain.points)
+        min_y = min(p.y for p in chain.points)
+        max_y = max(p.y for p in chain.points)
+
+        print(f"\nSegment hull: ({start.x}, {start.y}) to ({end.x}, {end.y})")
+        print(f"  Width: {width}mm, clearance: {clearance}mm, half_width: {half_width}mm")
+        print(f"  Hull X bounds: [{min_x:.3f}, {max_x:.3f}]")
+        print(f"  Hull Y bounds: [{min_y:.3f}, {max_y:.3f}]")
+
+        # Caps should extend half_width beyond endpoints
+        tolerance = 0.01
+        assert abs(min_x - (start.x - half_width)) < tolerance, \
+            f"Start cap min_x {min_x:.3f} != expected {start.x - half_width:.3f}"
+        assert abs(max_x - (end.x + half_width)) < tolerance, \
+            f"End cap max_x {max_x:.3f} != expected {end.x + half_width:.3f}"
+
+        # Y bounds should be symmetric around the segment
+        assert abs(min_y - (-half_width)) < tolerance, \
+            f"Hull min_y {min_y:.3f} != expected {-half_width:.3f}"
+        assert abs(max_y - half_width) < tolerance, \
+            f"Hull max_y {max_y:.3f} != expected {half_width:.3f}"
