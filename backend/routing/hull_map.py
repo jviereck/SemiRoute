@@ -397,3 +397,73 @@ class HullMap:
     def all_hulls(self) -> list[IndexedHull]:
         """Get all hulls in the map."""
         return self._hulls
+
+    def add_pending_trace(
+        self,
+        trace_id: str,
+        segments: list[tuple[float, float]],
+        width: float,
+        net_id: Optional[int] = None
+    ) -> None:
+        """
+        Add a pending trace as temporary hulls.
+
+        These hulls will be considered for collision checking until
+        clear_pending_hulls() is called.
+
+        Args:
+            trace_id: Unique identifier for the trace
+            segments: List of (x, y) waypoints
+            width: Trace width in mm
+            net_id: Net ID of the trace (same-net crossings allowed)
+        """
+        if not hasattr(self, '_pending_hulls'):
+            self._pending_hulls: list[IndexedHull] = []
+
+        # Create a hull for each segment
+        for i in range(len(segments) - 1):
+            start = Point(segments[i][0], segments[i][1])
+            end = Point(segments[i + 1][0], segments[i + 1][1])
+
+            chain = HullGenerator.segment_hull(
+                start, end, width, self.trace_clearance
+            )
+            chain.net_id = net_id
+
+            # Calculate bounding box
+            min_x = min(p.x for p in chain.points)
+            max_x = max(p.x for p in chain.points)
+            min_y = min(p.y for p in chain.points)
+            max_y = max(p.y for p in chain.points)
+
+            indexed = IndexedHull(
+                hull=chain,
+                net_id=net_id if net_id else 0,
+                min_x=min_x,
+                max_x=max_x,
+                min_y=min_y,
+                max_y=max_y,
+                source_type='pending',
+                source={'trace_id': trace_id, 'segment': i}
+            )
+
+            self._pending_hulls.append(indexed)
+            self._hulls.append(indexed)
+            self._add_to_grid(indexed)
+
+    def clear_pending_hulls(self) -> None:
+        """Remove all pending trace hulls."""
+        if not hasattr(self, '_pending_hulls'):
+            return
+
+        # Remove from _hulls list
+        pending_set = set(id(h) for h in self._pending_hulls)
+        self._hulls = [h for h in self._hulls if id(h) not in pending_set]
+
+        # Remove from grid - rebuild the affected cells
+        # For simplicity, rebuild the entire grid
+        self._grid.clear()
+        for hull in self._hulls:
+            self._add_to_grid(hull)
+
+        self._pending_hulls.clear()

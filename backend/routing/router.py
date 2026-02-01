@@ -213,38 +213,54 @@ class TraceRouter:
         """
         hull_map = self._get_hull_map(layer)
 
-        # Create walkaround router
-        router = WalkaroundRouter(
-            hull_map=hull_map,
-            trace_width=width,
-            max_iterations=1000,
-            corner_offset=0.1
-        )
-
-        # Perform routing
-        result = router.route(
-            Point(start_x, start_y),
-            Point(end_x, end_y),
-            net_id=net_id
-        )
-
-        if not result.success:
-            # Fall back to A* if walkaround fails
-            return self._route_element_aware(
-                start_x, start_y, end_x, end_y, layer, width, net_id
+        # Add pending traces as temporary hulls (excluding same-net)
+        pending = self.pending_store.get_traces_by_layer(layer)
+        pending_filtered = [t for t in pending
+                          if net_id is None or t.net_id != net_id]
+        for trace in pending_filtered:
+            hull_map.add_pending_trace(
+                trace.id,
+                trace.segments,
+                trace.width,
+                trace.net_id
             )
 
-        # Convert path to tuples
-        path = [p.to_tuple() for p in result.path]
+        try:
+            # Create walkaround router
+            router = WalkaroundRouter(
+                hull_map=hull_map,
+                trace_width=width,
+                max_iterations=1000,
+                corner_offset=0.1
+            )
 
-        # Optimize the path
-        optimizer = PathOptimizer(
-            hull_map=hull_map,
-            trace_width=width
-        )
-        path = optimizer.optimize(path, net_id)
+            # Perform routing
+            result = router.route(
+                Point(start_x, start_y),
+                Point(end_x, end_y),
+                net_id=net_id
+            )
 
-        return path
+            if not result.success:
+                # Fall back to A* if walkaround fails
+                return self._route_element_aware(
+                    start_x, start_y, end_x, end_y, layer, width, net_id
+                )
+
+            # Convert path to tuples
+            path = [p.to_tuple() for p in result.path]
+
+            # Optimize the path
+            optimizer = PathOptimizer(
+                hull_map=hull_map,
+                trace_width=width
+            )
+            path = optimizer.optimize(path, net_id)
+
+            return path
+        finally:
+            # Always clean up pending hulls
+            hull_map.clear_pending_hulls()
 
     def _route_element_aware(
         self,
