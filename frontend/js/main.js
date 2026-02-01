@@ -742,7 +742,7 @@
                 e.preventDefault();
                 e.stopPropagation();
                 finishCompanionSession();
-            } else if (appMode === 'trace' && routingSession) {
+            } else if (appMode === 'trace') {
                 e.preventDefault();
                 e.stopPropagation();
                 handleTraceDoubleClick(e);
@@ -956,13 +956,23 @@
             return;
         }
 
-        // Handle clicking on a trace to select as reference (no active session)
-        // Only allow reference selection when explicitly clicking on a trace/user-trace
-        // and not during any routing activity
-        if (!routingSession && !companionMode && match &&
-            (match.type === 'user-trace' || match.type === 'user-via' || match.type === 'trace')) {
-            // Don't select reference if clicking on a pad (user wants to start normal routing)
-            if (!clickedElement || !clickedElement.classList.contains('pad')) {
+        // Handle clicking on a trace (no active session)
+        if (!routingSession && !companionMode && match) {
+            if (match.type === 'user-trace' || match.type === 'user-via') {
+                // User-created segment: select it (allows deletion)
+                const routeId = match.element.dataset.traceId;
+                const segmentIndex = parseInt(match.element.dataset.segmentIndex, 10);
+                if (routeId && !isNaN(segmentIndex)) {
+                    if (e.shiftKey) {
+                        toggleSegmentSelection(routeId, segmentIndex);
+                    } else {
+                        selectSegment(routeId, segmentIndex);
+                    }
+                    updateTraceStatus('Segment selected. Backspace to delete, or click pad to route', 'routing');
+                    return;
+                }
+            } else if (match.type === 'trace') {
+                // PCB board trace: select as reference for companion mode
                 if (selectReferenceTrace(match)) {
                     return;
                 }
@@ -1025,7 +1035,17 @@
      * Commits current segment and ends routing.
      */
     async function handleTraceDoubleClick(e) {
-        if (!routingSession) return;
+        if (!routingSession) {
+            // If not routing, double-click can select reference for companion mode
+            const match = findBestMatchAtPoint(e.clientX, e.clientY);
+            if (match && (match.type === 'user-trace' || match.type === 'user-via' || match.type === 'trace')) {
+                if (selectReferenceTrace(match)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }
+            return;
+        }
 
         const bestMatch = findBestMatchAtPoint(e.clientX, e.clientY);
         const target = getTargetCoordinates(e, bestMatch ? bestMatch.element : null);
