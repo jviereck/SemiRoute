@@ -307,3 +307,152 @@ class TestCompanionViaPlacement:
         assert results[0] == (True, "")
         assert results[1] == (False, "Clearance violation")
         assert results[2] == (True, "")
+
+
+class TestCompanionMode45DegreeEnforcement:
+    """Tests for 45-degree angle enforcement in companion mode routing."""
+
+    def _is_45_degree_angle(self, dx: float, dy: float, tolerance: float = 0.001) -> bool:
+        """Check if a direction vector is at a 45-degree multiple angle."""
+        import math
+        if abs(dx) < tolerance and abs(dy) < tolerance:
+            return True  # Zero-length segment
+
+        # Normalize
+        length = math.sqrt(dx * dx + dy * dy)
+        if length < tolerance:
+            return True
+
+        ndx = abs(dx) / length
+        ndy = abs(dy) / length
+
+        # Check for orthogonal (0° or 90°)
+        if ndx < tolerance or ndy < tolerance:
+            return True
+
+        # Check for 45° diagonal
+        if abs(ndx - ndy) < tolerance:
+            return True
+
+        return False
+
+    def _check_path_angles(self, path: list) -> tuple[bool, list]:
+        """Check if all segments in a path are at 45-degree multiples.
+
+        Returns:
+            Tuple of (all_valid, list of invalid segment indices)
+        """
+        invalid_segments = []
+        for i in range(1, len(path)):
+            dx = path[i][0] - path[i-1][0]
+            dy = path[i][1] - path[i-1][1]
+            if not self._is_45_degree_angle(dx, dy):
+                invalid_segments.append(i)
+        return len(invalid_segments) == 0, invalid_segments
+
+    def test_companion_route_has_45_degree_angles(self, cached_router):
+        """Test that companion mode routes have 45-degree angle enforcement."""
+        # Create a simple reference path (horizontal)
+        reference_path = [(0, 0), (10, 0)]
+
+        # Route with a reference path (companion mode)
+        # Start and end points are offset from reference
+        path = cached_router.route(
+            start_x=0.0, start_y=0.5,
+            end_x=10.0, end_y=0.5,
+            layer="F.Cu",
+            width=0.25,
+            net_id=None,
+            reference_path=reference_path,
+            reference_spacing=0.5
+        )
+
+        if not path:
+            pytest.skip("No route found")
+
+        # Check all segments are at 45-degree multiples
+        all_valid, invalid = self._check_path_angles(path)
+        assert all_valid, f"Companion route has non-45° segments at indices: {invalid}"
+
+    def test_companion_route_with_diagonal_reference(self, cached_router):
+        """Test companion routing with a diagonal reference path."""
+        # Diagonal reference path (45 degrees)
+        reference_path = [(0, 0), (5, 5), (10, 5)]
+
+        path = cached_router.route(
+            start_x=0.0, start_y=0.5,
+            end_x=10.0, end_y=5.5,
+            layer="F.Cu",
+            width=0.25,
+            net_id=None,
+            reference_path=reference_path,
+            reference_spacing=0.5
+        )
+
+        if not path:
+            pytest.skip("No route found")
+
+        all_valid, invalid = self._check_path_angles(path)
+        assert all_valid, f"Companion route has non-45° segments at indices: {invalid}"
+
+    def test_companion_route_optimizer_applied(self, cached_router):
+        """Test that optimizer is applied to companion routes (not skipped)."""
+        # Create a reference path that would produce non-45° angles
+        # if optimizer were skipped
+        reference_path = [(0, 0), (3, 1), (6, 2)]  # ~18° angle
+
+        path = cached_router.route(
+            start_x=0.0, start_y=0.5,
+            end_x=6.0, end_y=2.5,
+            layer="F.Cu",
+            width=0.25,
+            net_id=None,
+            reference_path=reference_path,
+            reference_spacing=0.5
+        )
+
+        if not path:
+            pytest.skip("No route found")
+
+        # The optimizer should have converted to 45° segments
+        all_valid, invalid = self._check_path_angles(path)
+        assert all_valid, \
+            f"Optimizer not applied to companion route - non-45° segments at: {invalid}"
+
+    def test_regular_route_also_has_45_degrees(self, cached_router):
+        """Test that regular routes (non-companion) also have 45° enforcement."""
+        # Route without reference path
+        path = cached_router.route(
+            start_x=0.0, start_y=0.0,
+            end_x=5.0, end_y=3.0,  # ~31° angle, not 45°
+            layer="F.Cu",
+            width=0.25,
+            net_id=None
+        )
+
+        if not path:
+            pytest.skip("No route found")
+
+        all_valid, invalid = self._check_path_angles(path)
+        assert all_valid, f"Regular route has non-45° segments at indices: {invalid}"
+
+    def test_angle_check_helper_orthogonal(self):
+        """Test that orthogonal directions are recognized as 45° multiples."""
+        assert self._is_45_degree_angle(1, 0)   # 0°
+        assert self._is_45_degree_angle(0, 1)   # 90°
+        assert self._is_45_degree_angle(-1, 0)  # 180°
+        assert self._is_45_degree_angle(0, -1)  # 270°
+
+    def test_angle_check_helper_diagonal(self):
+        """Test that diagonal directions are recognized as 45° multiples."""
+        assert self._is_45_degree_angle(1, 1)    # 45°
+        assert self._is_45_degree_angle(-1, 1)   # 135°
+        assert self._is_45_degree_angle(-1, -1)  # 225°
+        assert self._is_45_degree_angle(1, -1)   # 315°
+
+    def test_angle_check_helper_non_45(self):
+        """Test that non-45° angles are rejected."""
+        assert not self._is_45_degree_angle(3, 1)   # ~18°
+        assert not self._is_45_degree_angle(2, 1)   # ~27°
+        assert not self._is_45_degree_angle(1, 2)   # ~63°
+        assert not self._is_45_degree_angle(3, 2)   # ~34°

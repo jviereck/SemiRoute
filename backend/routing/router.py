@@ -270,18 +270,24 @@ class TraceRouter:
                 )
                 t3 = time.time()
                 print(f"[Route] A* complete ({t3-t2:.3f}s), total={t3-t0:.3f}s", file=sys.stderr, flush=True)
+                # Optimize A* result to enforce 45° angles
+                if astar_result:
+                    optimizer = PathOptimizer(
+                        hull_map=hull_map,
+                        trace_width=width
+                    )
+                    astar_result = optimizer.optimize(astar_result, net_id)
                 return astar_result
 
             # Convert path to tuples
             path = [p.to_tuple() for p in result.path]
 
-            # Optimize the path (skip if following a reference to preserve waypoints)
-            if not reference_path:
-                optimizer = PathOptimizer(
-                    hull_map=hull_map,
-                    trace_width=width
-                )
-                path = optimizer.optimize(path, net_id)
+            # Optimize the path (always apply to enforce 45° angles)
+            optimizer = PathOptimizer(
+                hull_map=hull_map,
+                trace_width=width
+            )
+            path = optimizer.optimize(path, net_id)
 
             return path
         finally:
