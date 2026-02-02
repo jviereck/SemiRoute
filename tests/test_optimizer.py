@@ -195,8 +195,9 @@ class TestBacktrackRemoval:
 
         # Check that x coordinates never decrease significantly
         # (small decreases < 0.1mm are acceptable for 45° segments)
+        # Exclude the final point since we must reach the target endpoint
         max_x_seen = path[0][0]
-        for i, (x, y) in enumerate(path):
+        for i, (x, y) in enumerate(path[:-1]):  # Skip last point (target approach)
             if x < max_x_seen - 0.1:
                 # Found a significant leftward movement
                 pytest.fail(

@@ -636,8 +636,9 @@ class PathOptimizer:
                 self._path_clear(mid, end, net_id)):
                 return mid
 
-        # If no clear path, return first candidate anyway (let routing handle it)
-        return candidates[0] if candidates else None
+        # If no clear path is found, return None to keep the original segment
+        # (even if not at 45°, it's better than creating an obstacle violation)
+        return None
 
     def _remove_short_segments(
         self,
