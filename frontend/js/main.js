@@ -1697,7 +1697,7 @@
             const refSegment = companionMode.referenceRoute.segments[0];
             const referencePath = refSegment?.path || [];
 
-            console.log(`Companion: routing from (${companion.startPoint.x.toFixed(2)}, ${companion.startPoint.y.toFixed(2)}) to (${cursorPoint.x.toFixed(2)}, ${cursorPoint.y.toFixed(2)}), net=${companion.netId}`);
+            console.log(`Companion: routing from (${companion.startPoint.x.toFixed(2)}, ${companion.startPoint.y.toFixed(2)}) to (${cursorPoint.x.toFixed(2)}, ${cursorPoint.y.toFixed(2)}), net=${companion.netId}, refPath.length=${referencePath.length}`);
 
             try {
                 const response = await fetch('/api/route', {
