@@ -211,18 +211,16 @@ class TraceRouter:
         Produces smoother paths by following hull boundaries instead of
         grid-based pathfinding.
         """
+        import time
+        import sys
+        t0 = time.time()
+
         hull_map = self._get_hull_map(layer)
 
         # Add pending traces as temporary hulls (excluding same-net)
         pending = self.pending_store.get_traces_by_layer(layer)
         pending_filtered = [t for t in pending
                           if net_id is None or t.net_id != net_id]
-
-        # Debug: log what pending traces are being considered
-        if pending_filtered:
-            print(f"[Route] net_id={net_id}, layer={layer}: Adding {len(pending_filtered)} pending trace(s) as obstacles:")
-            for t in pending_filtered:
-                print(f"  - {t.id}: net={t.net_id}, width={t.width}, {len(t.segments)} points")
 
         for trace in pending_filtered:
             hull_map.add_pending_trace(
@@ -231,6 +229,8 @@ class TraceRouter:
                 trace.width,
                 trace.net_id
             )
+
+        t1 = time.time()
 
         try:
             # Create walkaround router
@@ -247,12 +247,17 @@ class TraceRouter:
                 Point(end_x, end_y),
                 net_id=net_id
             )
+            t2 = time.time()
 
             if not result.success:
                 # Fall back to A* if walkaround fails
-                return self._route_element_aware(
+                print(f"[Route] Walkaround failed ({t2-t1:.3f}s), falling back to A*", file=sys.stderr, flush=True)
+                astar_result = self._route_element_aware(
                     start_x, start_y, end_x, end_y, layer, width, net_id
                 )
+                t3 = time.time()
+                print(f"[Route] A* complete ({t3-t2:.3f}s), total={t3-t0:.3f}s", file=sys.stderr, flush=True)
+                return astar_result
 
             # Convert path to tuples
             path = [p.to_tuple() for p in result.path]
@@ -263,6 +268,8 @@ class TraceRouter:
                 trace_width=width
             )
             path = optimizer.optimize(path, net_id)
+            t3 = time.time()
+            print(f"[Route] Walkaround success ({t2-t1:.3f}s), optimize ({t3-t2:.3f}s), total={t3-t0:.3f}s", file=sys.stderr, flush=True)
 
             return path
         finally:

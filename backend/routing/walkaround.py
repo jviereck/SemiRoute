@@ -75,6 +75,11 @@ class WalkaroundRouter:
         iterations = 0
         visited_hulls: set[int] = set()  # Prevent infinite loops
 
+        # Track progress - bail if we're not getting closer
+        best_dist_sq = (end.x - start.x) ** 2 + (end.y - start.y) ** 2
+        stall_count = 0
+        max_stall = 20  # Bail if no progress for this many iterations
+
         while iterations < self.max_iterations:
             iterations += 1
 
@@ -119,11 +124,25 @@ class WalkaroundRouter:
             path.extend(best_path)
             current = best_path[-1]
 
+            # Check if we're making progress toward the goal
+            current_dist_sq = (end.x - current.x) ** 2 + (end.y - current.y) ** 2
+            if current_dist_sq < best_dist_sq * 0.95:  # At least 5% closer
+                best_dist_sq = current_dist_sq
+                stall_count = 0
+            else:
+                stall_count += 1
+                if stall_count >= max_stall:
+                    import sys
+                    print(f"[Walkaround] Stalled after {iterations} iterations (no progress for {max_stall} iters)", file=sys.stderr, flush=True)
+                    return WalkaroundResult(path=path, success=False, iterations=iterations)
+
             # Clear visited hulls when we successfully navigate around one
             # This allows revisiting if we approach from a different angle
             visited_hulls.clear()
 
         # Max iterations reached
+        import sys
+        print(f"[Walkaround] Max iterations ({iterations}) reached, path has {len(path)} points", file=sys.stderr, flush=True)
         return WalkaroundResult(path=path, success=False, iterations=iterations)
 
     def _find_first_blocking_hull(

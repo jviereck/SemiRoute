@@ -1472,6 +1472,7 @@
         if (match.type === 'user-trace' || match.type === 'user-via') {
             // User-created route - extract from userRoutes
             const routeId = match.element.dataset.traceId;
+            const segmentIndex = parseInt(match.element.dataset.segmentIndex, 10);
             const route = userRoutes.find(r => r.id === routeId);
             if (!route || route.segments.length === 0) {
                 showTraceError('Route has no segments');
@@ -1482,6 +1483,10 @@
                 netId: route.netId,
                 routeId: routeId
             };
+            // Also select the segment so backspace can delete it
+            if (!isNaN(segmentIndex)) {
+                selectSegment(routeId, segmentIndex);
+            }
         } else if (match.type === 'trace') {
             // PCB board trace - need to fetch connected path from backend
             const netId = parseInt(match.element.dataset.net, 10);
@@ -1581,7 +1586,7 @@
         });
 
         updateCompanionStatus();
-        updateTraceStatus('Reference selected. Alt+Click pad/via/trace to add companions', 'routing');
+        updateTraceStatus('Reference selected. Alt+Click to add companions, Backspace to delete', 'routing');
     }
 
     /**
