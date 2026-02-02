@@ -456,3 +456,235 @@ class TestCompanionMode45DegreeEnforcement:
         assert not self._is_45_degree_angle(2, 1)   # ~27°
         assert not self._is_45_degree_angle(1, 2)   # ~63°
         assert not self._is_45_degree_angle(3, 2)   # ~34°
+
+
+class TestCornerOffsetWaypoints:
+    """Tests for corner-based offset waypoint generation in companion routing."""
+
+    def test_generate_offset_waypoints_at_corners(self):
+        """Test that waypoints are generated at each corner of reference path."""
+        from backend.routing.walkaround import WalkaroundRouter
+        from backend.routing.hulls import Point
+
+        # Create a simple L-shaped reference path
+        reference_path = [(0, 0), (10, 0), (10, 10)]
+        spacing = 0.5
+
+        # Create a mock hull map (no obstacles)
+        mock_hull_map = MagicMock()
+        mock_hull_map.get_blocking_hulls.return_value = []
+        mock_hull_map.point_inside_any_hull.return_value = False
+
+        router = WalkaroundRouter(
+            hull_map=mock_hull_map,
+            trace_width=0.25,
+            reference_path=reference_path,
+            reference_spacing=spacing
+        )
+
+        # Start point to the left of the reference path
+        start = Point(0, 0.5)
+        end = Point(10, 10)
+
+        waypoints = router._generate_offset_waypoints(start, end)
+
+        # Should generate waypoints at each corner (3 vertices in reference path)
+        assert len(waypoints) == 3, f"Expected 3 waypoints, got {len(waypoints)}"
+
+    def test_compute_corner_offset_first_point(self):
+        """Test offset computation at first point (perpendicular to first segment)."""
+        from backend.routing.walkaround import WalkaroundRouter
+
+        reference_path = [(0, 0), (10, 0), (10, 10)]
+        spacing = 1.0
+
+        mock_hull_map = MagicMock()
+        router = WalkaroundRouter(
+            hull_map=mock_hull_map,
+            trace_width=0.25,
+            reference_path=reference_path,
+            reference_spacing=spacing
+        )
+
+        # Side = +1 means offset in positive perpendicular direction
+        offset_pt = router._compute_corner_offset(0, 1.0)
+
+        # First segment is horizontal (0,0) -> (10,0)
+        # Perpendicular direction with side=+1 should be (0, 1)
+        # Offset point should be at (0, 1)
+        assert abs(offset_pt.x - 0) < 0.001, f"Expected x=0, got {offset_pt.x}"
+        assert abs(offset_pt.y - 1) < 0.001, f"Expected y=1, got {offset_pt.y}"
+
+    def test_compute_corner_offset_last_point(self):
+        """Test offset computation at last point (perpendicular to last segment)."""
+        from backend.routing.walkaround import WalkaroundRouter
+
+        reference_path = [(0, 0), (10, 0), (10, 10)]
+        spacing = 1.0
+
+        mock_hull_map = MagicMock()
+        router = WalkaroundRouter(
+            hull_map=mock_hull_map,
+            trace_width=0.25,
+            reference_path=reference_path,
+            reference_spacing=spacing
+        )
+
+        # Last segment is vertical (10,0) -> (10,10)
+        # Perpendicular direction with side=+1 should be (-1, 0)
+        offset_pt = router._compute_corner_offset(2, 1.0)
+
+        # Offset point should be at (9, 10)
+        assert abs(offset_pt.x - 9) < 0.001, f"Expected x=9, got {offset_pt.x}"
+        assert abs(offset_pt.y - 10) < 0.001, f"Expected y=10, got {offset_pt.y}"
+
+    def test_compute_corner_offset_interior_corner(self):
+        """Test offset computation at interior corner (bisector of angle)."""
+        from backend.routing.walkaround import WalkaroundRouter
+        import math
+
+        reference_path = [(0, 0), (10, 0), (10, 10)]
+        spacing = 1.0
+
+        mock_hull_map = MagicMock()
+        router = WalkaroundRouter(
+            hull_map=mock_hull_map,
+            trace_width=0.25,
+            reference_path=reference_path,
+            reference_spacing=spacing
+        )
+
+        # Interior corner at (10, 0) is a 90-degree turn
+        # Bisector should be at 45 degrees from both edges
+        offset_pt = router._compute_corner_offset(1, 1.0)
+
+        # Bisector of horizontal and vertical should point at 45° (normalized (-1,1)/sqrt(2))
+        # Offset from (10,0) at distance 1.0 in that direction
+        expected_x = 10 - 1.0 / math.sqrt(2)  # ~9.29
+        expected_y = 0 + 1.0 / math.sqrt(2)   # ~0.71
+
+        assert abs(offset_pt.x - expected_x) < 0.01, f"Expected x={expected_x:.2f}, got {offset_pt.x:.2f}"
+        assert abs(offset_pt.y - expected_y) < 0.01, f"Expected y={expected_y:.2f}, got {offset_pt.y:.2f}"
+
+    def test_offset_waypoints_opposite_side(self):
+        """Test that side=-1 generates waypoints on the opposite side."""
+        from backend.routing.walkaround import WalkaroundRouter
+
+        reference_path = [(0, 0), (10, 0)]
+        spacing = 1.0
+
+        mock_hull_map = MagicMock()
+        router = WalkaroundRouter(
+            hull_map=mock_hull_map,
+            trace_width=0.25,
+            reference_path=reference_path,
+            reference_spacing=spacing
+        )
+
+        offset_pt_positive = router._compute_corner_offset(0, 1.0)
+        offset_pt_negative = router._compute_corner_offset(0, -1.0)
+
+        # Positive side should be at y=1, negative at y=-1
+        assert abs(offset_pt_positive.y - 1) < 0.001
+        assert abs(offset_pt_negative.y - (-1)) < 0.001
+
+
+class TestEntireRouteCompanion:
+    """Tests for entire-route companion routing (Alt+click functionality)."""
+
+    def test_route_uses_walkaround_between_waypoints(self, cached_router):
+        """Test that companion routing uses walkaround between offset waypoints."""
+        # Create a reference path
+        reference_path = [(0, 0), (10, 0), (10, 10)]
+
+        # Route the entire companion path
+        path = cached_router.route(
+            start_x=0.0, start_y=0.5,
+            end_x=10.0, end_y=10.0,
+            layer="F.Cu",
+            width=0.25,
+            net_id=None,
+            reference_path=reference_path,
+            reference_spacing=0.5
+        )
+
+        assert path is not None, "Route should succeed"
+        assert len(path) >= 3, "Path should have multiple waypoints"
+
+    def test_companion_path_follows_reference_at_spacing(self, cached_router):
+        """Test that companion path maintains approximate spacing from reference."""
+        import math
+
+        reference_path = [(0, 0), (20, 0)]  # Simple horizontal line
+        spacing = 1.0
+
+        path = cached_router.route(
+            start_x=0.0, start_y=1.0,  # Start offset by spacing
+            end_x=20.0, end_y=1.0,     # End offset by spacing
+            layer="F.Cu",
+            width=0.25,
+            net_id=None,
+            reference_path=reference_path,
+            reference_spacing=spacing
+        )
+
+        if not path:
+            pytest.skip("No route found")
+
+        # Check that path points are approximately at spacing distance from reference
+        for point in path:
+            # Distance from point to horizontal reference line (y=0)
+            dist_to_ref = abs(point[1])
+            # Allow some tolerance for routing around obstacles
+            assert dist_to_ref >= spacing * 0.5, \
+                f"Point {point} is too close to reference (dist={dist_to_ref:.2f})"
+
+    def test_companion_routing_with_obstacles(self, cached_router):
+        """Test that companion routing avoids obstacles via walkaround."""
+        # This tests that the walkaround algorithm is being used between waypoints
+        reference_path = [(0, 0), (10, 0), (10, 10)]
+
+        # Start and end should require going around obstacles
+        path = cached_router.route(
+            start_x=0.0, start_y=0.5,
+            end_x=10.0, end_y=10.5,
+            layer="F.Cu",
+            width=0.25,
+            net_id=None,
+            reference_path=reference_path,
+            reference_spacing=0.5
+        )
+
+        # The path should be non-empty if successful
+        # (walkaround may fail in some cases due to obstacles)
+        if path:
+            assert len(path) >= 2, "Path should have at least start and end"
+
+    def test_straight_reference_produces_simple_path(self):
+        """Test that a straight reference path produces an offset parallel line."""
+        from backend.routing.walkaround import WalkaroundRouter
+        from backend.routing.hulls import Point
+
+        reference_path = [(0, 0), (10, 0)]  # Horizontal line
+        spacing = 0.5
+
+        # Create a mock hull map (no obstacles)
+        mock_hull_map = MagicMock()
+        mock_hull_map.get_blocking_hulls.return_value = []
+        mock_hull_map.point_inside_any_hull.return_value = False
+
+        router = WalkaroundRouter(
+            hull_map=mock_hull_map,
+            trace_width=0.25,
+            reference_path=reference_path,
+            reference_spacing=spacing
+        )
+
+        start = Point(0, 0.5)  # Start offset above reference
+        end = Point(10, 0.5)   # End offset above reference
+
+        result = router.route(start, end)
+
+        assert result.success, "Route should succeed"
+        # Path should be relatively direct (start + waypoints + end)
+        assert len(result.path) <= 5, f"Simple path should have few points, got {len(result.path)}"

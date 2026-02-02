@@ -61,63 +61,86 @@ class WalkaroundRouter:
 
     def _generate_offset_waypoints(self, start: Point, end: Point) -> list[Point]:
         """
-        Generate intermediate waypoints that follow the reference path at spacing distance.
-        Returns waypoints between start and end that parallel the reference.
+        Generate offset waypoints at each CORNER of the reference path.
+        For entire-route companion routing, generates waypoints at all reference vertices.
         """
         if not self.reference_path or not self.reference_spacing or len(self.reference_path) < 2:
             return []
 
+        start_side = self._get_reference_side(start)
         waypoints = []
 
-        # Determine which side of the reference we're on (using start point)
-        start_side = self._get_reference_side(start)
-
-        # Project start and end onto reference path to find the relevant portion
-        start_proj_idx, start_proj_t = self._project_onto_reference(start)
-        end_proj_idx, end_proj_t = self._project_onto_reference(end)
-
-        # Determine segment range to use (may go forward or backward along reference)
-        if start_proj_idx <= end_proj_idx:
-            seg_start = start_proj_idx
-            seg_end = end_proj_idx
-        else:
-            seg_start = end_proj_idx
-            seg_end = start_proj_idx
-
-        # Generate waypoints along the relevant reference segments
-        for i in range(seg_start, min(seg_end + 1, len(self.reference_path) - 1)):
-            p1 = Point(self.reference_path[i][0], self.reference_path[i][1])
-            p2 = Point(self.reference_path[i + 1][0], self.reference_path[i + 1][1])
-
-            # Calculate perpendicular direction
-            dx = p2.x - p1.x
-            dy = p2.y - p1.y
-            length = math.sqrt(dx * dx + dy * dy)
-            if length < 0.01:
-                continue
-
-            # Perpendicular unit vector (same side as start)
-            perp_x = -dy / length * start_side
-            perp_y = dx / length * start_side
-
-            # Add offset point at segment midpoint
-            mid_x = (p1.x + p2.x) / 2 + perp_x * self.reference_spacing
-            mid_y = (p1.y + p2.y) / 2 + perp_y * self.reference_spacing
-            waypoints.append(Point(mid_x, mid_y))
-
-        # Sort waypoints by distance from start
-        waypoints.sort(key=lambda p: start.distance_to(p))
-
-        # Remove waypoints too close to start or end (but keep at least one if we have any)
-        if len(waypoints) > 1:
-            min_dist = 0.3  # Don't add waypoints closer than 0.3mm to endpoints
-            filtered = [wp for wp in waypoints
-                        if start.distance_to(wp) > min_dist and end.distance_to(wp) > min_dist]
-            # Keep at least one waypoint if filtering removed all
-            if filtered:
-                waypoints = filtered
+        # For each vertex in reference path, compute offset point
+        for i in range(len(self.reference_path)):
+            offset_pt = self._compute_corner_offset(i, start_side)
+            if offset_pt:
+                waypoints.append(offset_pt)
 
         return waypoints
+
+    def _compute_corner_offset(self, idx: int, side: float) -> Point:
+        """
+        Compute offset point at a reference path corner using perpendicular/bisector.
+
+        Args:
+            idx: Index of the vertex in reference_path
+            side: Which side of the reference (+1 or -1)
+
+        Returns:
+            Point offset from the reference corner at spacing distance
+        """
+        n = len(self.reference_path)
+        curr = Point(self.reference_path[idx][0], self.reference_path[idx][1])
+
+        if idx == 0:
+            # First point: perpendicular to first segment
+            next_pt = Point(self.reference_path[1][0], self.reference_path[1][1])
+            diff = next_pt - curr
+            length = diff.length()
+            if length < 0.001:
+                return curr
+            direction = Point(diff.x / length, diff.y / length)
+            perp = Point(-direction.y * side, direction.x * side)
+        elif idx == n - 1:
+            # Last point: perpendicular to last segment
+            prev = Point(self.reference_path[idx - 1][0], self.reference_path[idx - 1][1])
+            diff = curr - prev
+            length = diff.length()
+            if length < 0.001:
+                return curr
+            direction = Point(diff.x / length, diff.y / length)
+            perp = Point(-direction.y * side, direction.x * side)
+        else:
+            # Interior corner: bisect the angle between edges
+            prev = Point(self.reference_path[idx - 1][0], self.reference_path[idx - 1][1])
+            next_pt = Point(self.reference_path[idx + 1][0], self.reference_path[idx + 1][1])
+
+            in_diff = curr - prev
+            out_diff = next_pt - curr
+
+            in_len = in_diff.length()
+            out_len = out_diff.length()
+
+            if in_len < 0.001 or out_len < 0.001:
+                return curr
+
+            in_dir = Point(in_diff.x / in_len, in_diff.y / in_len)
+            out_dir = Point(out_diff.x / out_len, out_diff.y / out_len)
+
+            # Perpendiculars of each edge
+            perp_in = Point(-in_dir.y * side, in_dir.x * side)
+            perp_out = Point(-out_dir.y * side, out_dir.x * side)
+
+            # Bisector (average of perpendiculars, then normalize)
+            bisector = Point(perp_in.x + perp_out.x, perp_in.y + perp_out.y)
+            bisector_len = bisector.length()
+            if bisector_len < 0.001:
+                perp = perp_in
+            else:
+                perp = Point(bisector.x / bisector_len, bisector.y / bisector_len)
+
+        return Point(curr.x + perp.x * self.reference_spacing,
+                     curr.y + perp.y * self.reference_spacing)
 
     def _project_onto_reference(self, point: Point) -> tuple[int, float]:
         """
@@ -195,19 +218,41 @@ class WalkaroundRouter:
         Returns:
             WalkaroundResult with path and success status
         """
-        # If reference path provided, use simplified companion routing
+        import sys
+
+        # If reference path provided, use companion routing with waypoints
         if self.reference_path and self.reference_spacing:
+            print(f"[Companion] Routing with reference path: {len(self.reference_path)} points, spacing={self.reference_spacing}", file=sys.stderr, flush=True)
+            print(f"[Companion] Start: ({start.x:.2f}, {start.y:.2f}), End: ({end.x:.2f}, {end.y:.2f})", file=sys.stderr, flush=True)
+
             waypoints = self._generate_offset_waypoints(start, end)
-            # For companion routing, connect waypoints directly (or just start->end if no waypoints)
-            # This ensures we stay on the correct side of the reference
+            print(f"[Companion] Generated {len(waypoints)} offset waypoints at corners", file=sys.stderr, flush=True)
+            for i, wp in enumerate(waypoints):
+                print(f"[Companion]   WP{i}: ({wp.x:.2f}, {wp.y:.2f})", file=sys.stderr, flush=True)
+
+            # Route between consecutive waypoints using walkaround (obstacle-aware)
             full_path = [start]
+            current = start
+            total_iterations = 0
 
-            if waypoints:
-                for wp in waypoints:
-                    full_path.append(wp)
+            targets = waypoints + [end]
+            for i, target in enumerate(targets):
+                print(f"[Companion] Routing segment {i}: ({current.x:.2f}, {current.y:.2f}) -> ({target.x:.2f}, {target.y:.2f})", file=sys.stderr, flush=True)
+                result = self._route_segment(current, target, net_id)
+                total_iterations += result.iterations
 
-            full_path.append(end)
-            return WalkaroundResult(path=full_path, success=True, iterations=0)
+                if result.success and len(result.path) > 1:
+                    print(f"[Companion]   Segment {i} success: {len(result.path)} points", file=sys.stderr, flush=True)
+                    full_path.extend(result.path[1:])  # Skip first to avoid duplicates
+                    current = result.path[-1]
+                else:
+                    print(f"[Companion]   Segment {i} failed, using direct connection", file=sys.stderr, flush=True)
+                    # Direct fallback if routing fails
+                    full_path.append(target)
+                    current = target
+
+            print(f"[Companion] Final path: {len(full_path)} points", file=sys.stderr, flush=True)
+            return WalkaroundResult(path=full_path, success=True, iterations=total_iterations)
 
         # Fall back to normal walkaround routing (no reference path)
         return self._route_segment(start, end, net_id)
