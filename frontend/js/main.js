@@ -878,14 +878,14 @@
     function handleTraceMouseMove(e) {
         let svgPoint = viewer.screenToSVG(e.clientX, e.clientY);
 
-        // Snap to pad center if mouse is over a pad
+        // Snap to pad or via center if mouse is over one
         const match = findBestMatchAtPoint(e.clientX, e.clientY);
-        if (match && match.type === 'pad') {
-            const pad = match.element;
-            const dataX = pad.dataset.x;
-            const dataY = pad.dataset.y;
-            const cx = pad.getAttribute('cx');
-            const cy = pad.getAttribute('cy');
+        if (match && (match.type === 'pad' || match.type === 'via')) {
+            const element = match.element;
+            const dataX = element.dataset.x;
+            const dataY = element.dataset.y;
+            const cx = element.getAttribute('cx');
+            const cy = element.getAttribute('cy');
 
             if (dataX && dataY) {
                 svgPoint = { x: parseFloat(dataX), y: parseFloat(dataY) };
