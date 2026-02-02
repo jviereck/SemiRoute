@@ -525,8 +525,8 @@ class PathOptimizer:
         """
         Convert all segments to use only 45-degree angle multiples.
 
-        For each segment not at a 45° multiple, insert an intermediate point
-        to create two segments that are both at 45° multiples.
+        For each segment not at a 45° multiple, insert intermediate points
+        to create segments that are all at 45° multiples.
         """
         if len(points) < 2:
             return points
@@ -546,12 +546,22 @@ class PathOptimizer:
                 continue
 
             # Need to convert to 45° segments
-            # Strategy: use horizontal/vertical + 45° diagonal, or vice versa
+            # Strategy 1: Simple dogleg (1 intermediate point)
             mid_point = self._compute_45_midpoint(prev, curr, net_id)
 
             if mid_point is not None:
                 result.append(mid_point)
+                result.append(curr)
+                continue
 
+            # Strategy 2: Multi-waypoint path (2 intermediate points)
+            waypoints = self._find_45_path_around_obstacles(prev, curr, net_id)
+            if waypoints:
+                result.extend(waypoints)
+                result.append(curr)
+                continue
+
+            # No 45° path found - keep original segment
             result.append(curr)
 
         return result
@@ -639,6 +649,118 @@ class PathOptimizer:
         # If no clear path is found, return None to keep the original segment
         # (even if not at 45°, it's better than creating an obstacle violation)
         return None
+
+    def _find_45_path_around_obstacles(
+        self,
+        start: Point,
+        end: Point,
+        net_id: Optional[int]
+    ) -> Optional[list[Point]]:
+        """
+        Find a multi-waypoint 45° path around obstacles.
+
+        When simple doglegs fail, try to find a path with 2 intermediate points
+        that goes around the blocking obstacles while maintaining 45° angles.
+
+        Returns:
+            List of intermediate waypoints (not including start/end), or None if no path found
+        """
+        if self.hull_map is None:
+            return None
+
+        dx = end.x - start.x
+        dy = end.y - start.y
+        adx = abs(dx)
+        ady = abs(dy)
+        sx = 1 if dx > 0 else -1
+        sy = 1 if dy > 0 else -1
+
+        # Try different 2-waypoint strategies
+        candidates = []
+
+        # Strategy 1: Diagonal escape from start, then dogleg to end
+        # Go diagonal first to clear obstacles near start
+        for escape_dist in [2.0, 3.0, 4.0, 5.0]:
+            # Escape diagonally in the general direction of end
+            mid1 = Point(start.x + escape_dist * sx, start.y + escape_dist * sy)
+
+            if not self._path_clear(start, mid1, net_id):
+                continue
+
+            # From mid1, try to find a simple dogleg to end
+            mid2 = self._compute_45_midpoint(mid1, end, net_id)
+            if mid2 is not None:
+                candidates.append([mid1, mid2])
+
+        # Strategy 2: Orthogonal escape from start, then diagonal + orthogonal to end
+        for escape_dist in [2.0, 3.0, 4.0, 5.0]:
+            # Escape horizontally first
+            mid1_h = Point(start.x + escape_dist * sx, start.y)
+            if self._path_clear(start, mid1_h, net_id):
+                mid2 = self._compute_45_midpoint(mid1_h, end, net_id)
+                if mid2 is not None:
+                    candidates.append([mid1_h, mid2])
+
+            # Escape vertically first
+            mid1_v = Point(start.x, start.y + escape_dist * sy)
+            if self._path_clear(start, mid1_v, net_id):
+                mid2 = self._compute_45_midpoint(mid1_v, end, net_id)
+                if mid2 is not None:
+                    candidates.append([mid1_v, mid2])
+
+        # Strategy 3: Go wide around obstacles
+        # Try going perpendicular first, then diagonal toward end
+        for offset in [3.0, 5.0, 7.0]:
+            # Go perpendicular to the main direction, then toward end
+            if adx > ady:
+                # Main direction is horizontal, go vertical first
+                mid1_up = Point(start.x, start.y - offset)
+                mid1_down = Point(start.x, start.y + offset)
+                for mid1 in [mid1_up, mid1_down]:
+                    if self._path_clear(start, mid1, net_id):
+                        mid2 = self._compute_45_midpoint(mid1, end, net_id)
+                        if mid2 is not None:
+                            candidates.append([mid1, mid2])
+            else:
+                # Main direction is vertical, go horizontal first
+                mid1_left = Point(start.x - offset, start.y)
+                mid1_right = Point(start.x + offset, start.y)
+                for mid1 in [mid1_left, mid1_right]:
+                    if self._path_clear(start, mid1, net_id):
+                        mid2 = self._compute_45_midpoint(mid1, end, net_id)
+                        if mid2 is not None:
+                            candidates.append([mid1, mid2])
+
+        # Find the shortest valid path
+        best_path = None
+        best_length = float('inf')
+
+        for waypoints in candidates:
+            # Verify all segments are 45° and clear
+            points = [start] + waypoints + [end]
+            valid = True
+            total_length = 0.0
+
+            for i in range(len(points) - 1):
+                p1, p2 = points[i], points[i + 1]
+                seg_dx = p2.x - p1.x
+                seg_dy = p2.y - p1.y
+
+                if not self._is_45_degree_angle(seg_dx, seg_dy):
+                    valid = False
+                    break
+
+                if not self._path_clear(p1, p2, net_id):
+                    valid = False
+                    break
+
+                total_length += p1.distance_to(p2)
+
+            if valid and total_length < best_length:
+                best_length = total_length
+                best_path = waypoints
+
+        return best_path
 
     def _remove_short_segments(
         self,
