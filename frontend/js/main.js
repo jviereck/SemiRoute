@@ -1080,42 +1080,42 @@
             return;
         }
 
-        // When not routing: highlight net or select reference trace (like select mode)
+        // When not routing: highlight net or select segment (like select mode)
         if (!routingSession && !companionMode) {
             if (match) {
                 if (match.type === 'user-trace' || match.type === 'user-via') {
-                    // User-created segment: Shift+click for selection, regular click for reference
+                    // User-created segment: Shift+click for multi-selection, regular click for single selection
                     const routeId = match.element.dataset.traceId;
                     const segmentIndex = parseInt(match.element.dataset.segmentIndex, 10);
                     if (routeId && !isNaN(segmentIndex)) {
                         if (e.shiftKey) {
                             toggleSegmentSelection(routeId, segmentIndex);
                             updateTraceStatus('Segment selected. Backspace to delete', 'routing');
-                            return;
                         } else {
-                            // Try to select as reference for companion mode
-                            if (selectReferenceTrace(match)) {
-                                return;
-                            }
-                            // Fall back to segment selection if reference selection fails
+                            // Select segment and highlight its net
                             selectSegment(routeId, segmentIndex);
-                            updateTraceStatus('Segment selected. Double-click pad to route', 'routing');
-                            return;
+                            const netId = parseInt(match.element.dataset.net, 10);
+                            if (netId > 0) {
+                                selectNet(netId, match.element.dataset.netName);
+                            }
+                            updateTraceStatus('Double-click to start routing from here', '');
                         }
-                    }
-                } else if (match.type === 'trace') {
-                    // PCB board trace: select as reference for companion mode
-                    if (selectReferenceTrace(match)) {
                         return;
                     }
+                } else if (match.type === 'trace') {
+                    // PCB board trace: highlight net
+                    const netId = parseInt(match.element.dataset.net, 10);
+                    selectNet(netId, match.element.dataset.netName);
+                    updateTraceStatus('Double-click to start routing', '');
+                    return;
                 }
 
                 // Highlight net on single click (like select mode)
-                if (match.type === 'pad' || match.type === 'via' || match.type === 'trace') {
+                if (match.type === 'pad' || match.type === 'via') {
                     clearSegmentSelection();
                     const netId = parseInt(match.element.dataset.net, 10);
                     selectNet(netId, match.element.dataset.netName);
-                    updateTraceStatus('Double-click pad/via to start routing', '');
+                    updateTraceStatus('Double-click to start routing', '');
                     return;
                 }
             } else {
@@ -1162,7 +1162,8 @@
 
         if (!routingSession) {
             // Not routing - double-click starts a new routing session
-            if (match && (match.type === 'pad' || match.type === 'via' || match.type === 'trace')) {
+            const validTypes = ['pad', 'via', 'trace', 'user-trace', 'user-via'];
+            if (match && validTypes.includes(match.type)) {
                 const clickedElement = match.element;
                 const target = getTargetCoordinates(e, clickedElement);
                 const startNet = clickedElement ? parseInt(clickedElement.dataset.net, 10) : null;
