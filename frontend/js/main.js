@@ -1053,32 +1053,19 @@
 
     /**
      * Handle single click in trace mode.
+     * - When not routing: highlight net (like select mode), or select reference trace
      * - Ctrl+Click on pad with reference selected: add companion
-     * - Click on trace with no session: select as reference
-     * - First click on pad: start normal routing session
-     * - Subsequent clicks: commits current segment, click point becomes new start
+     * - When routing: commits current segment, click point becomes new start
      */
     async function handleTraceClick(e, clickedElement) {
-        const layer = document.getElementById('trace-layer').value;
-        const width = parseFloat(document.getElementById('trace-width').value);
         const match = findBestMatchAtPoint(e.clientX, e.clientY);
-
-        // When routing, only snap to same-net pads (avoid snapping to different-net pads)
-        let snapElement = clickedElement;
-        if (routingSession && routingSession.startNet) {
-            const clickedNet = clickedElement ? parseInt(clickedElement.dataset.net, 10) : null;
-            if (clickedNet && clickedNet !== routingSession.startNet) {
-                // Different net - don't snap to this pad, use raw cursor position
-                snapElement = null;
-            }
-        }
-        const target = getTargetCoordinates(e, snapElement);
 
         // Handle companion mode: if no companion yet, click pad to set start
         if (companionMode && !companionMode.companion) {
             if (match && (match.type === 'pad' || match.type === 'via')) {
                 const netId = parseInt(match.element.dataset.net, 10);
                 if (netId > 0) {
+                    const target = getTargetCoordinates(e, clickedElement);
                     setCompanionStart(match.element, target);
                     return;
                 }
@@ -1093,76 +1080,66 @@
             return;
         }
 
-        // Handle clicking on a trace (no active session)
-        if (!routingSession && !companionMode && match) {
-            if (match.type === 'user-trace' || match.type === 'user-via') {
-                // User-created segment: Shift+click for selection, regular click for reference
-                const routeId = match.element.dataset.traceId;
-                const segmentIndex = parseInt(match.element.dataset.segmentIndex, 10);
-                if (routeId && !isNaN(segmentIndex)) {
-                    if (e.shiftKey) {
-                        toggleSegmentSelection(routeId, segmentIndex);
-                        updateTraceStatus('Segment selected. Backspace to delete', 'routing');
-                        return;
-                    } else {
-                        // Try to select as reference for companion mode
-                        if (selectReferenceTrace(match)) {
+        // When not routing: highlight net or select reference trace (like select mode)
+        if (!routingSession && !companionMode) {
+            if (match) {
+                if (match.type === 'user-trace' || match.type === 'user-via') {
+                    // User-created segment: Shift+click for selection, regular click for reference
+                    const routeId = match.element.dataset.traceId;
+                    const segmentIndex = parseInt(match.element.dataset.segmentIndex, 10);
+                    if (routeId && !isNaN(segmentIndex)) {
+                        if (e.shiftKey) {
+                            toggleSegmentSelection(routeId, segmentIndex);
+                            updateTraceStatus('Segment selected. Backspace to delete', 'routing');
+                            return;
+                        } else {
+                            // Try to select as reference for companion mode
+                            if (selectReferenceTrace(match)) {
+                                return;
+                            }
+                            // Fall back to segment selection if reference selection fails
+                            selectSegment(routeId, segmentIndex);
+                            updateTraceStatus('Segment selected. Double-click pad to route', 'routing');
                             return;
                         }
-                        // Fall back to segment selection if reference selection fails
-                        selectSegment(routeId, segmentIndex);
-                        updateTraceStatus('Segment selected. Backspace to delete, or click pad to route', 'routing');
+                    }
+                } else if (match.type === 'trace') {
+                    // PCB board trace: select as reference for companion mode
+                    if (selectReferenceTrace(match)) {
                         return;
                     }
                 }
-            } else if (match.type === 'trace') {
-                // PCB board trace: select as reference for companion mode
-                if (selectReferenceTrace(match)) {
+
+                // Highlight net on single click (like select mode)
+                if (match.type === 'pad' || match.type === 'via' || match.type === 'trace') {
+                    clearSegmentSelection();
+                    const netId = parseInt(match.element.dataset.net, 10);
+                    selectNet(netId, match.element.dataset.netName);
+                    updateTraceStatus('Double-click pad/via to start routing', '');
                     return;
                 }
+            } else {
+                // Clicked on empty space - clear selection
+                clearSegmentSelection();
+                clearSelection();
+                updateTraceStatus('Double-click pad/via to start routing', '');
             }
+            return;
         }
 
-        // Normal routing mode
-        if (!routingSession) {
-            // First click - start routing session
-            const startNet = clickedElement ? parseInt(clickedElement.dataset.net, 10) : null;
-
-            // Detect layer from clicked element
-            let startLayer = layer;
-            if (clickedElement) {
-                const elementLayer = clickedElement.dataset.layer;
-                if (elementLayer && ['F.Cu', 'B.Cu', 'In1.Cu', 'In2.Cu'].includes(elementLayer)) {
-                    startLayer = elementLayer;
-                    document.getElementById('trace-layer').value = startLayer;
+        // When routing: commit segment at click point, make it new start
+        if (routingSession) {
+            // When routing, only snap to same-net pads (avoid snapping to different-net pads)
+            let snapElement = clickedElement;
+            if (routingSession.startNet) {
+                const clickedNet = clickedElement ? parseInt(clickedElement.dataset.net, 10) : null;
+                if (clickedNet && clickedNet !== routingSession.startNet) {
+                    // Different net - don't snap to this pad, use raw cursor position
+                    snapElement = null;
                 }
             }
+            const target = getTargetCoordinates(e, snapElement);
 
-            // Generate route ID for this entire routing session
-            const routeId = generateRouteId();
-
-            routingSession = {
-                routeId: routeId,
-                startNet: startNet,
-                startPoint: { x: target.x, y: target.y },
-                cursorPoint: { x: target.x, y: target.y },
-                pendingPath: null,
-                sessionSegments: [],
-                sessionVias: [],
-                currentLayer: startLayer,
-                width: width
-            };
-
-            // Highlight all elements of the same net
-            if (startNet && startNet > 0) {
-                viewer.highlightRoutingNet(startNet);
-            }
-
-            viewer.showStartMarker(target.x, target.y);
-            updateTraceStatus('Move mouse to route, click to commit, 1-4 for via+layer, dbl-click to end', 'routing');
-            document.getElementById('trace-actions').classList.remove('hidden');
-        } else {
-            // Subsequent click - commit segment at click point, make it new start
             routingSession.cursorPoint = { x: target.x, y: target.y };
 
             // Route to click point and commit
@@ -1175,28 +1152,61 @@
 
     /**
      * Handle double-click in trace mode.
-     * Commits current segment and ends routing.
-     */
-    /**
-     * Commits current segment and ends routing.
+     * - When not routing: start routing session on pad/via/trace
+     * - When routing: commits current segment and ends routing
      */
     async function handleTraceDoubleClick(e) {
+        const layer = document.getElementById('trace-layer').value;
+        const width = parseFloat(document.getElementById('trace-width').value);
+        const match = findBestMatchAtPoint(e.clientX, e.clientY);
+
         if (!routingSession) {
-            // If not routing, double-click can select reference for companion mode
-            const match = findBestMatchAtPoint(e.clientX, e.clientY);
-            if (match && (match.type === 'user-trace' || match.type === 'user-via' || match.type === 'trace')) {
-                if (selectReferenceTrace(match)) {
-                    e.preventDefault();
-                    e.stopPropagation();
+            // Not routing - double-click starts a new routing session
+            if (match && (match.type === 'pad' || match.type === 'via' || match.type === 'trace')) {
+                const clickedElement = match.element;
+                const target = getTargetCoordinates(e, clickedElement);
+                const startNet = clickedElement ? parseInt(clickedElement.dataset.net, 10) : null;
+
+                // Detect layer from clicked element
+                let startLayer = layer;
+                if (clickedElement) {
+                    const elementLayer = clickedElement.dataset.layer;
+                    if (elementLayer && ['F.Cu', 'B.Cu', 'In1.Cu', 'In2.Cu'].includes(elementLayer)) {
+                        startLayer = elementLayer;
+                        document.getElementById('trace-layer').value = startLayer;
+                    }
                 }
+
+                // Generate route ID for this entire routing session
+                const routeId = generateRouteId();
+
+                routingSession = {
+                    routeId: routeId,
+                    startNet: startNet,
+                    startPoint: { x: target.x, y: target.y },
+                    cursorPoint: { x: target.x, y: target.y },
+                    pendingPath: null,
+                    sessionSegments: [],
+                    sessionVias: [],
+                    currentLayer: startLayer,
+                    width: width
+                };
+
+                // Highlight all elements of the same net
+                if (startNet && startNet > 0) {
+                    viewer.highlightRoutingNet(startNet);
+                }
+
+                viewer.showStartMarker(target.x, target.y);
+                updateTraceStatus('Move mouse to route, click to commit, 1-4 for via+layer, dbl-click to end', 'routing');
+                document.getElementById('trace-actions').classList.remove('hidden');
             }
             return;
         }
 
-        const bestMatch = findBestMatchAtPoint(e.clientX, e.clientY);
-
+        // Already routing - double-click finishes the routing session
         // Only snap to same-net pads when ending route
-        let snapElement = bestMatch ? bestMatch.element : null;
+        let snapElement = match ? match.element : null;
         if (routingSession.startNet && snapElement) {
             const matchNet = parseInt(snapElement.dataset.net, 10);
             if (matchNet && matchNet !== routingSession.startNet) {
@@ -1208,7 +1218,7 @@
 
         console.log('Double-click to commit:', {
             target: target,
-            bestMatch: bestMatch ? { type: bestMatch.type, net: bestMatch.element?.dataset?.net } : null,
+            bestMatch: match ? { type: match.type, net: match.element?.dataset?.net } : null,
             snappedTo: snapElement ? 'same-net pad' : 'cursor position',
             currentStart: routingSession.startPoint,
             previousCursor: routingSession.cursorPoint,
@@ -1448,7 +1458,7 @@
         routingSession = null;
         document.getElementById('trace-actions').classList.add('hidden');
         hideTraceError();
-        updateTraceStatus('Click a pad to start', '');
+        updateTraceStatus('Double-click pad/via to start routing', '');
     }
 
     // ==================== COMPANION MODE FUNCTIONS ====================

@@ -150,8 +150,8 @@ async function runTests() {
         // ========== TEST 4: Start routing session ==========
         log('\n--- Test 4: Start Routing Session ---');
 
-        // Click on the pad to start routing
-        await page.mouse.click(elements.pad.screenX, elements.pad.screenY);
+        // Double-click on the pad to start routing (single click just highlights)
+        await page.mouse.click(elements.pad.screenX, elements.pad.screenY, { clickCount: 2 });
         await sleep(300);
 
         const sessionStarted = await page.evaluate(() => {

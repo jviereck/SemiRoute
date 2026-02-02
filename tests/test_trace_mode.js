@@ -258,8 +258,78 @@ async function runTests() {
             // Continue with other tests anyway
         }
 
-        // ========== TEST 7: Start marker appears on first click ==========
-        log('\n--- Test 7: Start Marker ---');
+        // ========== TEST 7: Single-click highlights net (no routing) ==========
+        log('\n--- Test 7: Single-Click Highlights ---');
+
+        // Ensure trace mode is enabled
+        let traceModeActive = await page.evaluate(() => {
+            return document.body.classList.contains('trace-mode-active');
+        });
+        if (!traceModeActive) {
+            await page.click('#trace-mode-toggle');
+            await sleep(200);
+        }
+
+        // Get a pad to single-click
+        const highlightTarget = await page.evaluate(() => {
+            const pads = document.querySelectorAll('.pad');
+            for (const pad of pads) {
+                if (parseInt(pad.dataset.net, 10) > 0) {
+                    const bbox = pad.getBoundingClientRect();
+                    return {
+                        screenX: bbox.x + bbox.width / 2,
+                        screenY: bbox.y + bbox.height / 2,
+                        padId: pad.id,
+                        netId: pad.dataset.net
+                    };
+                }
+            }
+            return null;
+        });
+
+        if (highlightTarget) {
+            log(`  Single-clicking on pad at (${highlightTarget.screenX.toFixed(1)}, ${highlightTarget.screenY.toFixed(1)})`);
+            // Single click should highlight, not start routing
+            await page.mouse.click(highlightTarget.screenX, highlightTarget.screenY);
+            await sleep(300);
+
+            const afterSingleClick = await page.evaluate((netId) => {
+                // Check if routing session started (it should NOT have)
+                const state = window.getRoutingState?.();
+                const hasRoutingSession = state?.routingSession !== null && state?.routingSession !== undefined;
+
+                // Check if net is highlighted
+                const highlightedPads = document.querySelectorAll(`.pad.highlighted[data-net="${netId}"]`);
+
+                // Check if start marker exists (it should NOT)
+                const hasStartMarker = !!document.querySelector('.start-marker');
+
+                return {
+                    hasRoutingSession,
+                    hasStartMarker,
+                    highlightedCount: highlightedPads.length
+                };
+            }, highlightTarget.netId);
+
+            if (!afterSingleClick.hasRoutingSession && !afterSingleClick.hasStartMarker) {
+                pass('Single-click does not start routing');
+            } else {
+                fail('Single-click does not start routing', `routingSession=${afterSingleClick.hasRoutingSession}, startMarker=${afterSingleClick.hasStartMarker}`);
+            }
+
+            if (afterSingleClick.highlightedCount > 0) {
+                pass('Single-click highlights net', `${afterSingleClick.highlightedCount} pads highlighted`);
+            } else {
+                fail('Single-click highlights net');
+            }
+
+            // Clear selection for next test
+            await page.keyboard.press('Escape');
+            await sleep(200);
+        }
+
+        // ========== TEST 8: Start marker appears on double-click ==========
+        log('\n--- Test 8: Start Marker ---');
 
         // Ensure trace mode is enabled
         const traceModeEnabled = await page.evaluate(() => {
@@ -294,8 +364,9 @@ async function runTests() {
         });
 
         if (clickTarget) {
-            log(`  Clicking on pad at (${clickTarget.screenX.toFixed(1)}, ${clickTarget.screenY.toFixed(1)})`);
-            await page.mouse.click(clickTarget.screenX, clickTarget.screenY);
+            log(`  Double-clicking on pad at (${clickTarget.screenX.toFixed(1)}, ${clickTarget.screenY.toFixed(1)})`);
+            // Double-click to start routing (single click just highlights in trace mode)
+            await page.mouse.click(clickTarget.screenX, clickTarget.screenY, { clickCount: 2 });
             await sleep(500);
 
             const markerExists = await page.evaluate(() => {
@@ -304,9 +375,9 @@ async function runTests() {
             });
 
             if (markerExists) {
-                pass('Start marker appears after first click');
+                pass('Start marker appears after double-click');
             } else {
-                fail('Start marker appears after first click');
+                fail('Start marker appears after double-click');
             }
 
             const statusText = await page.evaluate(() => {
@@ -315,10 +386,10 @@ async function runTests() {
             });
 
             log(`  Status: "${statusText}"`);
-            if (statusText.toLowerCase().includes('click') || statusText.toLowerCase().includes('destination')) {
-                pass('Status updates after first click');
+            if (statusText.toLowerCase().includes('click') || statusText.toLowerCase().includes('route') || statusText.toLowerCase().includes('move')) {
+                pass('Status updates after double-click');
             } else {
-                fail('Status updates after first click', `Got: "${statusText}"`);
+                fail('Status updates after double-click', `Got: "${statusText}"`);
             }
 
             await page.screenshot({ path: `${SCREENSHOT_DIR}/trace_mode_start_marker.png`, fullPage: true });
@@ -326,7 +397,7 @@ async function runTests() {
         }
 
         // ========== TEST 8: API Route endpoint ==========
-        log('\n--- Test 8: Route API Endpoint ---');
+        log('\n--- Test 9: Route API Endpoint ---');
 
         const routeResponse = await page.evaluate(async () => {
             try {
@@ -359,7 +430,7 @@ async function runTests() {
         }
 
         // ========== TEST 9: Path uses 45-degree angles ==========
-        log('\n--- Test 9: 45-Degree Angle Constraint ---');
+        log('\n--- Test 10: 45-Degree Angle Constraint ---');
 
         if (routeResponse.data && routeResponse.data.path && routeResponse.data.path.length >= 2) {
             const path = routeResponse.data.path;
@@ -393,7 +464,7 @@ async function runTests() {
         }
 
         // ========== TEST 10: Same-net crossing allowed ==========
-        log('\n--- Test 10: Same-Net Crossing ---');
+        log('\n--- Test 11: Same-Net Crossing ---');
 
         if (testPads) {
             const sameNetRoute = await page.evaluate(async (pads) => {
@@ -434,7 +505,7 @@ async function runTests() {
         }
 
         // ========== TEST 11: Cancel resets state ==========
-        log('\n--- Test 11: Cancel/Reset ---');
+        log('\n--- Test 12: Cancel/Reset ---');
 
         // Press Escape to cancel
         await page.keyboard.press('Escape');
