@@ -1066,7 +1066,7 @@
                 const netId = parseInt(match.element.dataset.net, 10);
                 if (netId > 0) {
                     const target = getTargetCoordinates(e, clickedElement);
-                    setCompanionStart(match.element, target);
+                    setCompanionStart(match.element, target, e);
                     return;
                 }
             }
@@ -1601,8 +1601,9 @@
      * Simplified: only one companion at a time, routes like a normal trace.
      * @param {Element} clickedElement - The element that was clicked
      * @param {Object} clickTarget - The click target coordinates {x, y}
+     * @param {Event} event - Optional click event for Alt+click detection
      */
-    function setCompanionStart(clickedElement, clickTarget) {
+    function setCompanionStart(clickedElement, clickTarget, event) {
         if (!companionMode) return;
 
         const netId = parseInt(clickedElement.dataset.net, 10);
@@ -1645,9 +1646,107 @@
 
         console.log(`Companion start: net=${netId}, pos=(${startX.toFixed(2)}, ${startY.toFixed(2)})`);
 
+        // If Alt+click, route entire companion immediately
+        if (event && event.altKey) {
+            routeEntireCompanion();
+            return;
+        }
+
         updateCompanionStatus();
         hideTraceError();
         document.getElementById('trace-actions').classList.remove('hidden');
+    }
+
+    /**
+     * Route the entire companion trace along the reference path.
+     * Called when user Alt+clicks on a pad to start companion routing.
+     */
+    async function routeEntireCompanion() {
+        if (!companionMode || !companionMode.companion) return;
+
+        const companion = companionMode.companion;
+        const refSegment = companionMode.referenceRoute.segments[0];
+        const referencePath = refSegment?.path || [];
+
+        console.log('[Companion] Starting entire companion route');
+        console.log('[Companion] Reference path:', referencePath.length, 'points');
+        console.log('[Companion] Start point:', companion.startPoint);
+        console.log('[Companion] Spacing:', companionMode.spacing);
+
+        if (referencePath.length < 2) {
+            showTraceError('Reference path too short');
+            return;
+        }
+
+        // Route to the offset of the last reference point
+        const lastRefPoint = referencePath[referencePath.length - 1];
+
+        const requestBody = {
+            start_x: companion.startPoint.x,
+            start_y: companion.startPoint.y,
+            end_x: lastRefPoint[0],
+            end_y: lastRefPoint[1],
+            layer: companionMode.currentLayer,
+            width: companion.width,
+            net_id: companion.netId,
+            reference_path: referencePath,
+            reference_spacing: companionMode.spacing
+        };
+
+        console.log('[Companion] Request:', JSON.stringify(requestBody, null, 2));
+
+        try {
+            const response = await fetch('/api/route', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            const data = await response.json();
+
+            console.log('[Companion] Response:', JSON.stringify(data, null, 2));
+
+            if (data.success && data.path.length > 0) {
+                console.log('[Companion] Route success, path has', data.path.length, 'waypoints');
+                companion.pendingPath = data.path;
+                // Commit as final trace
+                await commitCompanionSegment();
+                exitCompanionMode();
+                updateTraceStatus('Companion trace completed', 'success');
+            } else {
+                console.log('[Companion] Route failed:', data.message);
+                showTraceError('Could not route companion: ' + (data.message || 'path blocked'));
+            }
+        } catch (error) {
+            console.error('[Companion] Routing error:', error);
+            showTraceError('Routing failed: ' + error.message);
+        }
+    }
+
+    /**
+     * Exit companion mode cleanly after completing entire route.
+     */
+    function exitCompanionMode() {
+        if (!companionMode) return;
+
+        const companion = companionMode.companion;
+        if (companion && companion.sessionSegments.length > 0) {
+            const route = {
+                id: companion.routeId,
+                segments: companion.sessionSegments,
+                netId: companion.netId,
+                visible: true
+            };
+            userRoutes.push(route);
+            addRouteToList(route);
+        }
+
+        viewer.clearCompanionPreviews();
+        viewer.clearReferenceHighlight();
+
+        companionMode = null;
+        updateCompanionStatus();
+        document.getElementById('trace-actions').classList.add('hidden');
     }
 
     /**
