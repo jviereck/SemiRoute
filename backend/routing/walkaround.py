@@ -160,9 +160,11 @@ class WalkaroundRouter:
         if not self.reference_path or len(self.reference_path) < 2:
             return 1
 
-        # Use the first segment to determine side
-        p1 = Point(self.reference_path[0][0], self.reference_path[0][1])
-        p2 = Point(self.reference_path[1][0], self.reference_path[1][1])
+        # Find the closest segment to the point
+        closest_idx, _ = self._project_onto_reference(point)
+
+        p1 = Point(self.reference_path[closest_idx][0], self.reference_path[closest_idx][1])
+        p2 = Point(self.reference_path[closest_idx + 1][0], self.reference_path[closest_idx + 1][1])
 
         # Cross product to determine side
         dx = p2.x - p1.x
@@ -194,26 +196,19 @@ class WalkaroundRouter:
         if self.reference_path and self.reference_spacing:
             waypoints = self._generate_offset_waypoints(start, end)
             if waypoints:
-                # Route through waypoints: start -> wp1 -> wp2 -> ... -> end
+                # For companion routing, connect waypoints directly
+                # This ensures we stay on the correct side of the reference
                 full_path = [start]
                 current = start
-                total_iterations = 0
 
                 targets = waypoints + [end]
                 for target in targets:
-                    result = self._route_segment(current, target, net_id)
-                    total_iterations += result.iterations
+                    # Always use direct connection for companion routing
+                    # This keeps the path simple and on the correct side
+                    full_path.append(target)
+                    current = target
 
-                    if not result.success:
-                        # Try to continue to next waypoint
-                        continue
-
-                    # Add path (skip first point to avoid duplicates)
-                    full_path.extend(result.path[1:])
-                    current = result.path[-1]
-
-                if len(full_path) > 1:
-                    return WalkaroundResult(path=full_path, success=True, iterations=total_iterations)
+                return WalkaroundResult(path=full_path, success=True, iterations=0)
 
         # Fall back to direct routing
         return self._route_segment(start, end, net_id)

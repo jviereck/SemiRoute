@@ -95,3 +95,7 @@ pytest tests/ -m "not slow"
 - PCB coordinates are in millimeters
 - Grid resolution is 0.025mm (configurable)
 - Default clearance is 0.2mm
+
+## Development Workflow
+
+**Always add unit tests:** After fixing a bug or implementing a new feature, add unit tests to verify the fix/feature works correctly. Use pytest for Python backend tests and Puppeteer for browser tests.
