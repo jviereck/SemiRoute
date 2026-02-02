@@ -108,11 +108,14 @@ class WalkaroundRouter:
         # Sort waypoints by distance from start
         waypoints.sort(key=lambda p: start.distance_to(p))
 
-        # Remove waypoints too close to start or end
-        if waypoints:
+        # Remove waypoints too close to start or end (but keep at least one if we have any)
+        if len(waypoints) > 1:
             min_dist = 0.3  # Don't add waypoints closer than 0.3mm to endpoints
-            waypoints = [wp for wp in waypoints
+            filtered = [wp for wp in waypoints
                         if start.distance_to(wp) > min_dist and end.distance_to(wp) > min_dist]
+            # Keep at least one waypoint if filtering removed all
+            if filtered:
+                waypoints = filtered
 
         return waypoints
 
@@ -192,25 +195,21 @@ class WalkaroundRouter:
         Returns:
             WalkaroundResult with path and success status
         """
-        # If reference path provided, route through offset waypoints
+        # If reference path provided, use simplified companion routing
         if self.reference_path and self.reference_spacing:
             waypoints = self._generate_offset_waypoints(start, end)
+            # For companion routing, connect waypoints directly (or just start->end if no waypoints)
+            # This ensures we stay on the correct side of the reference
+            full_path = [start]
+
             if waypoints:
-                # For companion routing, connect waypoints directly
-                # This ensures we stay on the correct side of the reference
-                full_path = [start]
-                current = start
+                for wp in waypoints:
+                    full_path.append(wp)
 
-                targets = waypoints + [end]
-                for target in targets:
-                    # Always use direct connection for companion routing
-                    # This keeps the path simple and on the correct side
-                    full_path.append(target)
-                    current = target
+            full_path.append(end)
+            return WalkaroundResult(path=full_path, success=True, iterations=0)
 
-                return WalkaroundResult(path=full_path, success=True, iterations=0)
-
-        # Fall back to direct routing
+        # Fall back to normal walkaround routing (no reference path)
         return self._route_segment(start, end, net_id)
 
     def _route_segment(
