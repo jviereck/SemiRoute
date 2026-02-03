@@ -17,7 +17,8 @@
     "test:selection": "node tests/test_segment_selection.js",
     "test:highlight": "node tests/test_net_highlight.js",
     "test:zoom": "node tests/test_zoom_performance.js",
-    "test:c5-trace-add": "node tests/test_c5_trace_add.js"
+    "test:c5-trace-add": "node tests/test_c5_trace_add.js",
+    "test:auto-route": "node tests/test_auto_route.js"
   },
   "keywords": [],
   "author": "",

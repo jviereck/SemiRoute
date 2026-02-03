@@ -4,6 +4,7 @@ from .obstacles import ObstacleMap, ElementAwareMap
 from .geometry import GeometryChecker
 from .spatial_index import SpatialIndex
 from .pending import PendingTraceStore
+from .autorouter import AutoRouter, AutoRouteResult, AutoRouteSegment, AutoRouteVia
 
 __all__ = [
     'TraceRouter',
@@ -12,4 +13,8 @@ __all__ = [
     'GeometryChecker',
     'SpatialIndex',
     'PendingTraceStore',
+    'AutoRouter',
+    'AutoRouteResult',
+    'AutoRouteSegment',
+    'AutoRouteVia',
 ]

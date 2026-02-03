@@ -13,7 +13,7 @@ from typing import Optional
 from .config import DEFAULT_PCB_FILE, DEFAULT_PORT, FRONTEND_DIR, PROJECT_ROOT
 from .pcb import PCBParser
 from .svg import SVGGenerator
-from .routing import TraceRouter
+from .routing import TraceRouter, AutoRouter
 
 app = FastAPI(title="SemiRouter PCB Viewer", version="0.1.0")
 
@@ -75,6 +75,40 @@ class TraceInfo(BaseModel):
     net_id: Optional[int]
     segment_count: int
 
+
+class AutoRouteRequest(BaseModel):
+    """Request model for auto-routing with via placement."""
+    start_x: float
+    start_y: float
+    end_x: float
+    end_y: float
+    preferred_layer: str
+    width: float
+    net_id: Optional[int] = None
+    via_size: float = 0.8
+
+
+class AutoRouteSegmentResponse(BaseModel):
+    """A single segment in an auto-route response."""
+    path: list[list[float]]
+    layer: str
+
+
+class AutoRouteViaResponse(BaseModel):
+    """A via in an auto-route response."""
+    x: float
+    y: float
+    size: float
+
+
+class AutoRouteResponse(BaseModel):
+    """Response model for auto-routing."""
+    success: bool
+    segments: list[AutoRouteSegmentResponse]
+    vias: list[AutoRouteViaResponse]
+    message: str = ""
+
+
 # Load PCB once at startup
 pcb_parser = PCBParser(DEFAULT_PCB_FILE)
 svg_generator = SVGGenerator(pcb_parser)
@@ -92,6 +126,9 @@ trace_router = TraceRouter(
 # 0.125mm radius = 0.25mm trace width (most common)
 for obs_map in trace_router._obstacle_cache.values():
     obs_map.get_expanded_blocked(0.125)
+
+# Create auto-router using the trace router
+auto_router = AutoRouter(trace_router)
 
 
 @app.get("/")
@@ -261,6 +298,45 @@ async def route_trace(request: RouteRequest):
             path=[],
             message="No valid route found - path may be blocked by obstacles"
         )
+
+
+@app.post("/api/auto-route", response_model=AutoRouteResponse)
+async def auto_route(request: AutoRouteRequest):
+    """
+    Automatically route between two points with via placement if needed.
+
+    Uses a cascading strategy:
+    1. Try preferred layer first
+    2. Try alternate layers if blocked
+    3. Try single via routing
+    4. Try double via routing for complex obstacles
+    """
+    result = auto_router.auto_route(
+        start_x=request.start_x,
+        start_y=request.start_y,
+        end_x=request.end_x,
+        end_y=request.end_y,
+        preferred_layer=request.preferred_layer,
+        width=request.width,
+        net_id=request.net_id,
+        via_size=request.via_size
+    )
+
+    return AutoRouteResponse(
+        success=result.success,
+        segments=[
+            AutoRouteSegmentResponse(
+                path=[[p[0], p[1]] for p in seg.path],
+                layer=seg.layer
+            )
+            for seg in result.segments
+        ],
+        vias=[
+            AutoRouteViaResponse(x=via.x, y=via.y, size=via.size)
+            for via in result.vias
+        ],
+        message=result.message
+    )
 
 
 @app.post("/api/traces", response_model=TraceResponse)

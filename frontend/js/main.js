@@ -1144,6 +1144,101 @@
     }
 
     /**
+     * Auto-route to a destination pad using the /api/auto-route endpoint.
+     * Places vias automatically if needed to reach the destination.
+     *
+     * @param {Element} padElement - The destination pad element
+     * @param {number} padX - X coordinate of pad center
+     * @param {number} padY - Y coordinate of pad center
+     */
+    async function autoRouteToPad(padElement, padX, padY) {
+        if (!routingSession) return;
+
+        const viaSize = 0.8;
+
+        try {
+            updateTraceStatus('Auto-routing to pad...', 'routing');
+
+            const response = await fetch('/api/auto-route', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    start_x: routingSession.startPoint.x,
+                    start_y: routingSession.startPoint.y,
+                    end_x: padX,
+                    end_y: padY,
+                    preferred_layer: routingSession.currentLayer,
+                    width: routingSession.width,
+                    net_id: routingSession.startNet,
+                    via_size: viaSize
+                })
+            });
+
+            const data = await response.json();
+
+            if (!data.success) {
+                showTraceError(data.message || 'Auto-route failed');
+                updateTraceStatus('Auto-route failed - try manual routing', '');
+                return;
+            }
+
+            // Process each segment and via from the auto-route result
+            let currentLayer = routingSession.currentLayer;
+
+            for (let i = 0; i < data.segments.length; i++) {
+                const segment = data.segments[i];
+
+                // If layer changed, we need to place a via first
+                if (segment.layer !== currentLayer && i > 0) {
+                    // Find the via that connects these layers
+                    // The via should be at the end of the previous segment
+                    const prevSegment = data.segments[i - 1];
+                    const prevPath = prevSegment.path;
+                    const viaPoint = prevPath[prevPath.length - 1];
+
+                    // Find matching via from the response
+                    const via = data.vias.find(v =>
+                        Math.abs(v.x - viaPoint[0]) < 0.01 &&
+                        Math.abs(v.y - viaPoint[1]) < 0.01
+                    );
+
+                    if (via) {
+                        const viaSegmentIndex = routingSession.sessionSegments.length;
+                        routingSession.sessionVias.push({ x: via.x, y: via.y, size: via.size });
+                        viewer.renderUserVia(via.x, via.y, via.size, false, routingSession.routeId, viaSegmentIndex, routingSession.startNet);
+                    }
+
+                    currentLayer = segment.layer;
+                }
+
+                // Add the segment
+                const segmentIndex = routingSession.sessionSegments.length;
+                const segmentData = {
+                    path: segment.path,
+                    layer: segment.layer,
+                    width: routingSession.width
+                };
+                routingSession.sessionSegments.push(segmentData);
+                viewer.confirmPendingTrace(segment.path, segment.layer, routingSession.width, routingSession.routeId, segmentIndex, routingSession.startNet);
+            }
+
+            // Update routing session state
+            routingSession.currentLayer = currentLayer;
+            document.getElementById('trace-layer').value = currentLayer;
+
+            // Finish the routing session
+            finishRoutingSession();
+
+            updateTraceStatus(`Auto-routed with ${data.segments.length} segment(s), ${data.vias.length} via(s)`, 'success');
+
+        } catch (error) {
+            console.error('Auto-route error:', error);
+            showTraceError('Failed to auto-route');
+            updateTraceStatus('Auto-route failed - try manual routing', '');
+        }
+    }
+
+    /**
      * Handle layer switching with via placement.
      * Places via at current cursor position and makes it the new start point.
      */
