@@ -293,6 +293,11 @@ class SVGViewer {
             el.classList.remove('highlighted');
         });
 
+        // Clear hover highlights so they don't override selection highlight
+        this.svg.querySelectorAll('.net-hover').forEach(el => {
+            el.classList.remove('net-hover');
+        });
+
         // Highlight new selection
         if (netId !== null) {
             this.svg.querySelectorAll(`.pad[data-net="${netId}"]`).forEach(el => {
