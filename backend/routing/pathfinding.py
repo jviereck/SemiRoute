@@ -303,40 +303,13 @@ def _reconstruct_path(
     return [(x * resolution, y * resolution) for x, y in simplified]
 
 
-def _distance_to_path(x: float, y: float, path: list[tuple[float, float]]) -> float:
-    """Calculate minimum distance from a point to a path (list of segments)."""
-    if not path or len(path) < 2:
-        return float('inf')
-
-    min_dist = float('inf')
-    for i in range(len(path) - 1):
-        p1 = path[i]
-        p2 = path[i + 1]
-        # Distance from (x,y) to line segment p1-p2
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        len_sq = dx * dx + dy * dy
-        if len_sq < 0.0001:
-            dist = math.sqrt((x - p1[0])**2 + (y - p1[1])**2)
-        else:
-            t = max(0, min(1, ((x - p1[0]) * dx + (y - p1[1]) * dy) / len_sq))
-            closest_x = p1[0] + t * dx
-            closest_y = p1[1] + t * dy
-            dist = math.sqrt((x - closest_x)**2 + (y - closest_y)**2)
-        min_dist = min(min_dist, dist)
-
-    return min_dist
-
-
 def astar_search_element_aware(
     obstacle_map: ElementAwareMap,
     start_x: float, start_y: float,
     end_x: float, end_y: float,
     trace_radius: float = 0,
     net_id: Optional[int] = None,
-    pending_traces: Optional[list] = None,
-    reference_path: Optional[list[tuple[float, float]]] = None,
-    reference_spacing: Optional[float] = None
+    pending_traces: Optional[list] = None
 ) -> list[tuple[float, float]]:
     """
     A* pathfinding using element-aware obstacle checking.
@@ -353,8 +326,6 @@ def astar_search_element_aware(
         trace_radius: Half of trace width for collision checking
         net_id: Net ID for same-net routing (passed to is_blocked)
         pending_traces: Optional list of pending traces to also avoid
-        reference_path: Optional reference path for guided routing
-        reference_spacing: Desired spacing from reference path
 
     Returns:
         List of (x, y) waypoints, or empty list if no path found
@@ -441,14 +412,6 @@ def astar_search_element_aware(
                 if dir_diff > 4:
                     dir_diff = 8 - dir_diff
                 move_cost += TURN_PENALTIES.get(dir_diff, 0.5)
-
-            # Add reference following cost if provided
-            if reference_path and reference_spacing:
-                dist_to_ref = _distance_to_path(world_x, world_y, reference_path)
-                deviation = abs(dist_to_ref - reference_spacing)
-                # Penalty for deviation from ideal spacing (tuned weight)
-                # Small weight (0.1) to prefer following without overriding obstacle avoidance
-                move_cost += deviation * 0.1
 
             new_g = g + move_cost
 

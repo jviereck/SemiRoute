@@ -153,12 +153,8 @@ async function runTests() {
             fail('Trace error initially hidden');
         }
 
-        // ========== TEST 5: Enable trace mode and start routing ==========
+        // ========== TEST 5: Start routing session ==========
         log('\n--- Test 5: Start Routing Session with Net Highlight ---');
-
-        // Enable trace mode
-        await page.click('#trace-mode-toggle');
-        await sleep(300);
 
         // Find a pad to click
         const startPad = await page.evaluate(() => {
@@ -178,8 +174,8 @@ async function runTests() {
         });
 
         if (startPad) {
-            log(`  Clicking on pad ${startPad.padId} (net ${startPad.netId}) at (${startPad.screenX.toFixed(1)}, ${startPad.screenY.toFixed(1)})`);
-            await page.mouse.click(startPad.screenX, startPad.screenY);
+            log(`  Double-clicking on pad ${startPad.padId} (net ${startPad.netId}) at (${startPad.screenX.toFixed(1)}, ${startPad.screenY.toFixed(1)})`);
+            await page.mouse.click(startPad.screenX, startPad.screenY, { clickCount: 2 });
             await sleep(500);
 
             const sessionStarted = await page.evaluate((netId) => {

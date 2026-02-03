@@ -50,14 +50,7 @@ async function runTests() {
         await page.goto(SERVER_URL, { waitUntil: 'networkidle0', timeout: 10000 });
         await page.waitForSelector('svg');
 
-        // Ensure we're in select mode (not trace mode)
-        const isTraceMode = await page.evaluate(() => {
-            return document.body.classList.contains('trace-mode-active');
-        });
-        if (isTraceMode) {
-            await page.keyboard.press('t');
-            await sleep(200);
-        }
+        // Test highlighting in normal mode (no routing session active)
 
         // ========== TEST 1: Clicking on a pad highlights the net ==========
         console.log('--- Test 1: Pad click highlights net ---');

@@ -114,25 +114,10 @@ async function runTests() {
             fail('Baseline zoom performance', `avg ${baselinePerf.avg.toFixed(2)}ms >= 50ms`);
         }
 
-        // ========== TEST 2: Enter trace mode and start routing ==========
-        log('\n--- Test 2: Enter trace mode and start routing ---');
+        // ========== TEST 2: Start routing session ==========
+        log('\n--- Test 2: Start routing session ---');
 
-        // Click the trace mode toggle
-        await page.click('#trace-mode-toggle');
-        await sleep(200);
-
-        const traceModeActive = await page.evaluate(() => {
-            const toggle = document.getElementById('trace-mode-toggle');
-            return toggle && toggle.classList.contains('active');
-        });
-
-        if (traceModeActive) {
-            pass('Trace mode activated');
-        } else {
-            fail('Trace mode activated');
-        }
-
-        // Find a pad to click on to start routing
+        // Find a pad to double-click on to start routing
         const padInfo = await page.evaluate(() => {
             const pads = document.querySelectorAll('.pad[data-net]');
             if (pads.length === 0) return null;
@@ -147,7 +132,7 @@ async function runTests() {
         });
 
         if (padInfo) {
-            await page.mouse.click(padInfo.x, padInfo.y);
+            await page.mouse.click(padInfo.x, padInfo.y, { clickCount: 2 });
             await sleep(300);
             pass('Clicked on pad to start routing', `net ${padInfo.netId}`);
         } else {

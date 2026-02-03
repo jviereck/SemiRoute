@@ -36,9 +36,7 @@ class WalkaroundRouter:
         hull_map: HullMap,
         trace_width: float,
         max_iterations: int = 1000,
-        corner_offset: float = 0.1,
-        reference_path: Optional[list[tuple[float, float]]] = None,
-        reference_spacing: Optional[float] = None
+        corner_offset: float = 0.1
     ):
         """
         Initialize walkaround router.
@@ -48,158 +46,12 @@ class WalkaroundRouter:
             trace_width: Width of trace being routed
             max_iterations: Maximum iterations before giving up
             corner_offset: Offset from hull corners (prevents touching)
-            reference_path: Optional reference path for guided routing
-            reference_spacing: Desired spacing from reference path
         """
         self.hull_map = hull_map
         self.trace_width = trace_width
         self.half_width = trace_width / 2
         self.max_iterations = max_iterations
         self.corner_offset = corner_offset
-        self.reference_path = reference_path
-        self.reference_spacing = reference_spacing
-
-    def _generate_offset_waypoints(self, start: Point, end: Point) -> list[Point]:
-        """
-        Generate offset waypoints at each CORNER of the reference path.
-        For entire-route companion routing, generates waypoints at all reference vertices.
-        """
-        if not self.reference_path or not self.reference_spacing or len(self.reference_path) < 2:
-            return []
-
-        start_side = self._get_reference_side(start)
-        waypoints = []
-
-        # For each vertex in reference path, compute offset point
-        for i in range(len(self.reference_path)):
-            offset_pt = self._compute_corner_offset(i, start_side)
-            if offset_pt:
-                waypoints.append(offset_pt)
-
-        return waypoints
-
-    def _compute_corner_offset(self, idx: int, side: float) -> Point:
-        """
-        Compute offset point at a reference path corner using perpendicular/bisector.
-
-        Args:
-            idx: Index of the vertex in reference_path
-            side: Which side of the reference (+1 or -1)
-
-        Returns:
-            Point offset from the reference corner at spacing distance
-        """
-        n = len(self.reference_path)
-        curr = Point(self.reference_path[idx][0], self.reference_path[idx][1])
-
-        if idx == 0:
-            # First point: perpendicular to first segment
-            next_pt = Point(self.reference_path[1][0], self.reference_path[1][1])
-            diff = next_pt - curr
-            length = diff.length()
-            if length < 0.001:
-                return curr
-            direction = Point(diff.x / length, diff.y / length)
-            perp = Point(-direction.y * side, direction.x * side)
-        elif idx == n - 1:
-            # Last point: perpendicular to last segment
-            prev = Point(self.reference_path[idx - 1][0], self.reference_path[idx - 1][1])
-            diff = curr - prev
-            length = diff.length()
-            if length < 0.001:
-                return curr
-            direction = Point(diff.x / length, diff.y / length)
-            perp = Point(-direction.y * side, direction.x * side)
-        else:
-            # Interior corner: bisect the angle between edges
-            prev = Point(self.reference_path[idx - 1][0], self.reference_path[idx - 1][1])
-            next_pt = Point(self.reference_path[idx + 1][0], self.reference_path[idx + 1][1])
-
-            in_diff = curr - prev
-            out_diff = next_pt - curr
-
-            in_len = in_diff.length()
-            out_len = out_diff.length()
-
-            if in_len < 0.001 or out_len < 0.001:
-                return curr
-
-            in_dir = Point(in_diff.x / in_len, in_diff.y / in_len)
-            out_dir = Point(out_diff.x / out_len, out_diff.y / out_len)
-
-            # Perpendiculars of each edge
-            perp_in = Point(-in_dir.y * side, in_dir.x * side)
-            perp_out = Point(-out_dir.y * side, out_dir.x * side)
-
-            # Bisector (average of perpendiculars, then normalize)
-            bisector = Point(perp_in.x + perp_out.x, perp_in.y + perp_out.y)
-            bisector_len = bisector.length()
-            if bisector_len < 0.001:
-                perp = perp_in
-            else:
-                perp = Point(bisector.x / bisector_len, bisector.y / bisector_len)
-
-        return Point(curr.x + perp.x * self.reference_spacing,
-                     curr.y + perp.y * self.reference_spacing)
-
-    def _project_onto_reference(self, point: Point) -> tuple[int, float]:
-        """
-        Project a point onto the reference path.
-        Returns (segment_index, t) where t is 0-1 position along that segment.
-        """
-        if not self.reference_path or len(self.reference_path) < 2:
-            return (0, 0.0)
-
-        best_idx = 0
-        best_t = 0.0
-        best_dist = float('inf')
-
-        for i in range(len(self.reference_path) - 1):
-            p1 = Point(self.reference_path[i][0], self.reference_path[i][1])
-            p2 = Point(self.reference_path[i + 1][0], self.reference_path[i + 1][1])
-
-            # Project point onto segment
-            dx = p2.x - p1.x
-            dy = p2.y - p1.y
-            len_sq = dx * dx + dy * dy
-
-            if len_sq < 0.0001:
-                t = 0.0
-            else:
-                t = ((point.x - p1.x) * dx + (point.y - p1.y) * dy) / len_sq
-                t = max(0.0, min(1.0, t))
-
-            # Calculate closest point on segment
-            closest_x = p1.x + t * dx
-            closest_y = p1.y + t * dy
-            dist = math.sqrt((point.x - closest_x) ** 2 + (point.y - closest_y) ** 2)
-
-            if dist < best_dist:
-                best_dist = dist
-                best_idx = i
-                best_t = t
-
-        return (best_idx, best_t)
-
-    def _get_reference_side(self, point: Point) -> float:
-        """Determine which side of the reference path a point is on. Returns 1 or -1."""
-        if not self.reference_path or len(self.reference_path) < 2:
-            return 1
-
-        # Find the closest segment to the point
-        closest_idx, _ = self._project_onto_reference(point)
-
-        p1 = Point(self.reference_path[closest_idx][0], self.reference_path[closest_idx][1])
-        p2 = Point(self.reference_path[closest_idx + 1][0], self.reference_path[closest_idx + 1][1])
-
-        # Cross product to determine side
-        dx = p2.x - p1.x
-        dy = p2.y - p1.y
-        to_point_x = point.x - p1.x
-        to_point_y = point.y - p1.y
-
-        cross = dx * to_point_y - dy * to_point_x
-        return 1 if cross >= 0 else -1
 
     def route(
         self,
@@ -218,43 +70,6 @@ class WalkaroundRouter:
         Returns:
             WalkaroundResult with path and success status
         """
-        import sys
-
-        # If reference path provided, use companion routing with waypoints
-        if self.reference_path and self.reference_spacing:
-            print(f"[Companion] Routing with reference path: {len(self.reference_path)} points, spacing={self.reference_spacing}", file=sys.stderr, flush=True)
-            print(f"[Companion] Start: ({start.x:.2f}, {start.y:.2f}), End: ({end.x:.2f}, {end.y:.2f})", file=sys.stderr, flush=True)
-
-            waypoints = self._generate_offset_waypoints(start, end)
-            print(f"[Companion] Generated {len(waypoints)} offset waypoints at corners", file=sys.stderr, flush=True)
-            for i, wp in enumerate(waypoints):
-                print(f"[Companion]   WP{i}: ({wp.x:.2f}, {wp.y:.2f})", file=sys.stderr, flush=True)
-
-            # Route between consecutive waypoints using walkaround (obstacle-aware)
-            full_path = [start]
-            current = start
-            total_iterations = 0
-
-            targets = waypoints + [end]
-            for i, target in enumerate(targets):
-                print(f"[Companion] Routing segment {i}: ({current.x:.2f}, {current.y:.2f}) -> ({target.x:.2f}, {target.y:.2f})", file=sys.stderr, flush=True)
-                result = self._route_segment(current, target, net_id)
-                total_iterations += result.iterations
-
-                if result.success and len(result.path) > 1:
-                    print(f"[Companion]   Segment {i} success: {len(result.path)} points", file=sys.stderr, flush=True)
-                    full_path.extend(result.path[1:])  # Skip first to avoid duplicates
-                    current = result.path[-1]
-                else:
-                    print(f"[Companion]   Segment {i} failed, using direct connection", file=sys.stderr, flush=True)
-                    # Direct fallback if routing fails
-                    full_path.append(target)
-                    current = target
-
-            print(f"[Companion] Final path: {len(full_path)} points", file=sys.stderr, flush=True)
-            return WalkaroundResult(path=full_path, success=True, iterations=total_iterations)
-
-        # Fall back to normal walkaround routing (no reference path)
         return self._route_segment(start, end, net_id)
 
     def _route_segment(
@@ -488,42 +303,6 @@ class WalkaroundRouter:
         blocking = self._find_first_blocking_hull(start, end, net_id)
         return blocking is None
 
-    def _distance_to_reference(self, point: Point) -> float:
-        """Calculate minimum distance from a point to the reference path."""
-        if not self.reference_path or len(self.reference_path) < 2:
-            return 0.0
-
-        min_dist = float('inf')
-        for i in range(len(self.reference_path) - 1):
-            p1 = self.reference_path[i]
-            p2 = self.reference_path[i + 1]
-            dist = point_to_segment_distance(
-                point,
-                Point(p1[0], p1[1]),
-                Point(p2[0], p2[1])
-            )
-            min_dist = min(min_dist, dist)
-
-        return min_dist
-
-    def _reference_following_score(self, path: list[Point]) -> float:
-        """
-        Calculate how well a path follows the reference at the desired spacing.
-
-        Returns the average squared deviation from the ideal spacing.
-        Lower is better (0 = perfect following).
-        """
-        if not self.reference_path or not self.reference_spacing or not path:
-            return 0.0
-
-        total_deviation = 0.0
-        for point in path:
-            dist = self._distance_to_reference(point)
-            deviation = abs(dist - self.reference_spacing)
-            total_deviation += deviation * deviation
-
-        return total_deviation / len(path)
-
     def _choose_best_path(
         self,
         cw_path: list[Point],
@@ -568,13 +347,6 @@ class WalkaroundRouter:
         # Both valid - compare total path lengths including distance to goal
         cw_len = self._path_length(cw_truncated) + cw_truncated[-1].distance_to(goal)
         ccw_len = self._path_length(ccw_truncated) + ccw_truncated[-1].distance_to(goal)
-
-        # If reference path is provided, add penalty for deviation from ideal spacing
-        if self.reference_path and self.reference_spacing:
-            # Weight factor for reference following (adjust to tune behavior)
-            ref_weight = 0.5  # mm penalty per unit deviation score
-            cw_len += ref_weight * self._reference_following_score(cw_truncated)
-            ccw_len += ref_weight * self._reference_following_score(ccw_truncated)
 
         return cw_truncated if cw_len <= ccw_len else ccw_truncated
 

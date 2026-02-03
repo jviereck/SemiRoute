@@ -163,9 +163,7 @@ class TraceRouter:
         end_y: float,
         layer: str,
         width: float,
-        net_id: Optional[int] = None,
-        reference_path: Optional[list[tuple[float, float]]] = None,
-        reference_spacing: Optional[float] = None
+        net_id: Optional[int] = None
     ) -> list[tuple[float, float]]:
         """
         Route a trace between two points.
@@ -176,8 +174,6 @@ class TraceRouter:
             layer: Copper layer (e.g., 'F.Cu', 'B.Cu')
             width: Trace width (mm)
             net_id: Optional net ID to allow crossing same-net elements
-            reference_path: Optional reference path for guided routing
-            reference_spacing: Desired spacing from reference path
 
         Returns:
             List of (x, y) waypoints defining the trace path.
@@ -187,8 +183,7 @@ class TraceRouter:
             # Use legacy A* pathfinding
             if self.use_element_aware:
                 return self._route_element_aware(
-                    start_x, start_y, end_x, end_y, layer, width, net_id,
-                    reference_path, reference_spacing
+                    start_x, start_y, end_x, end_y, layer, width, net_id
                 )
             else:
                 return self._route_legacy(
@@ -197,8 +192,7 @@ class TraceRouter:
         else:
             # Use hull-based walkaround routing (default)
             return self._route_walkaround(
-                start_x, start_y, end_x, end_y, layer, width, net_id,
-                reference_path, reference_spacing
+                start_x, start_y, end_x, end_y, layer, width, net_id
             )
 
     def _route_walkaround(
@@ -209,17 +203,13 @@ class TraceRouter:
         end_y: float,
         layer: str,
         width: float,
-        net_id: Optional[int] = None,
-        reference_path: Optional[list[tuple[float, float]]] = None,
-        reference_spacing: Optional[float] = None
+        net_id: Optional[int] = None
     ) -> list[tuple[float, float]]:
         """
         Route using hull-based walkaround algorithm.
 
         Produces smoother paths by following hull boundaries instead of
-        grid-based pathfinding. If reference_path and reference_spacing are
-        provided, prefers paths that stay at the specified distance from
-        the reference.
+        grid-based pathfinding.
         """
         import time
         import sys
@@ -248,9 +238,7 @@ class TraceRouter:
                 hull_map=hull_map,
                 trace_width=width,
                 max_iterations=1000,
-                corner_offset=0.1,
-                reference_path=reference_path,
-                reference_spacing=reference_spacing
+                corner_offset=0.1
             )
 
             # Perform routing
@@ -265,8 +253,7 @@ class TraceRouter:
                 # Fall back to A* if walkaround fails
                 print(f"[Route] Walkaround failed ({t2-t1:.3f}s), falling back to A*", file=sys.stderr, flush=True)
                 astar_result = self._route_element_aware(
-                    start_x, start_y, end_x, end_y, layer, width, net_id,
-                    reference_path, reference_spacing
+                    start_x, start_y, end_x, end_y, layer, width, net_id
                 )
                 t3 = time.time()
                 print(f"[Route] A* complete ({t3-t2:.3f}s), total={t3-t0:.3f}s", file=sys.stderr, flush=True)
@@ -302,9 +289,7 @@ class TraceRouter:
         end_y: float,
         layer: str,
         width: float,
-        net_id: Optional[int] = None,
-        reference_path: Optional[list[tuple[float, float]]] = None,
-        reference_spacing: Optional[float] = None
+        net_id: Optional[int] = None
     ) -> list[tuple[float, float]]:
         """Route using element-aware pathfinding with exact geometry."""
         # Get element-aware map
@@ -329,9 +314,7 @@ class TraceRouter:
             end_x, end_y,
             trace_radius=width / 2,
             net_id=net_id,
-            pending_traces=pending_filtered if pending_filtered else None,
-            reference_path=reference_path,
-            reference_spacing=reference_spacing
+            pending_traces=pending_filtered if pending_filtered else None
         )
 
     def _route_legacy(

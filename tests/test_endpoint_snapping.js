@@ -146,23 +146,8 @@ async function runTests() {
             throw new Error('Cannot continue without test pads');
         }
 
-        // ========== TEST 3: Enable trace mode ==========
-        log('\n--- Test 3: Enable Trace Mode ---');
-        await page.click('#trace-mode-toggle');
-        await sleep(300);
-
-        const traceModeEnabled = await page.evaluate(() => {
-            return document.body.classList.contains('trace-mode-active');
-        });
-
-        if (traceModeEnabled) {
-            pass('Trace mode enabled');
-        } else {
-            fail('Trace mode enabled');
-        }
-
-        // ========== TEST 4: Start routing from pad 1 ==========
-        log('\n--- Test 4: Start Routing Session ---');
+        // ========== TEST 3: Start routing from pad 1 ==========
+        log('\n--- Test 3: Start Routing Session ---');
 
         // Get screen coordinates for pad 1
         const pad1Screen = await page.evaluate((padInfo) => {
@@ -185,10 +170,10 @@ async function runTests() {
             return { x: screenX, y: screenY };
         }, padInfo);
 
-        log(`  Clicking pad 1 at screen (${pad1Screen.x.toFixed(1)}, ${pad1Screen.y.toFixed(1)})`);
+        log(`  Double-clicking pad 1 at screen (${pad1Screen.x.toFixed(1)}, ${pad1Screen.y.toFixed(1)})`);
 
-        // Click to start routing
-        await page.mouse.click(pad1Screen.x, pad1Screen.y);
+        // Double-click to start routing
+        await page.mouse.click(pad1Screen.x, pad1Screen.y, { clickCount: 2 });
         await sleep(300);
 
         const routingStarted = await page.evaluate(() => {
@@ -203,8 +188,8 @@ async function runTests() {
             fail('Routing session started');
         }
 
-        // ========== TEST 5: Route towards empty space (not to pad 2) ==========
-        log('\n--- Test 5: Route Away From Different-Net Pad ---');
+        // ========== TEST 4: Route towards empty space (not to pad 2) ==========
+        log('\n--- Test 4: Route Away From Different-Net Pad ---');
 
         // Calculate a position away from both pads
         const targetPoint = {
@@ -244,8 +229,8 @@ async function runTests() {
             pass('Route preview not shown (may be blocked by obstacles)');
         }
 
-        // ========== TEST 6: Click near different-net pad - should NOT snap ==========
-        log('\n--- Test 6: Click Near Different-Net Pad ---');
+        // ========== TEST 5: Click near different-net pad - should NOT snap ==========
+        log('\n--- Test 5: Click Near Different-Net Pad ---');
 
         // Position between the two pads (closer to pad 2)
         const nearPad2 = {
@@ -319,8 +304,8 @@ async function runTests() {
 
         await page.screenshot({ path: `${SCREENSHOT_DIR}/endpoint_snap_test.png`, fullPage: true });
 
-        // ========== TEST 7: Verify same-net snapping still works ==========
-        log('\n--- Test 7: Same-Net Snapping Works ---');
+        // ========== TEST 6: Verify same-net snapping still works ==========
+        log('\n--- Test 6: Same-Net Snapping Works ---');
 
         // Find two pads on the same net
         const sameNetPads = await page.evaluate(() => {
@@ -355,16 +340,7 @@ async function runTests() {
             log(`    Pad 1: (${sameNetPads.pad1.x.toFixed(2)}, ${sameNetPads.pad1.y.toFixed(2)})`);
             log(`    Pad 2: (${sameNetPads.pad2.x.toFixed(2)}, ${sameNetPads.pad2.y.toFixed(2)})`);
 
-            // Re-enable trace mode if needed
-            const needsEnable = await page.evaluate(() => {
-                return !document.body.classList.contains('trace-mode-active');
-            });
-            if (needsEnable) {
-                await page.click('#trace-mode-toggle');
-                await sleep(300);
-            }
-
-            // Click pad 1 to start
+            // Double-click pad 1 to start routing
             const sameNetPad1Screen = await page.evaluate((pad) => {
                 const container = document.getElementById('svg-container');
                 const svg = container.querySelector('svg');
@@ -381,7 +357,7 @@ async function runTests() {
                 };
             }, sameNetPads.pad1);
 
-            await page.mouse.click(sameNetPad1Screen.x, sameNetPad1Screen.y);
+            await page.mouse.click(sameNetPad1Screen.x, sameNetPad1Screen.y, { clickCount: 2 });
             await sleep(300);
 
             // Double-click on pad 2 (same net - should snap and work)

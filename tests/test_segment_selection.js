@@ -39,15 +39,6 @@ async function sleep(ms) {
  * Returns the route ID if successful.
  */
 async function createTestRoute(page, numSegments = 3) {
-    // Enable trace mode if not already
-    const traceModeEnabled = await page.evaluate(() => {
-        return document.body.classList.contains('trace-mode-active');
-    });
-    if (!traceModeEnabled) {
-        await page.click('#trace-mode-toggle');
-        await sleep(200);
-    }
-
     // Find a starting pad
     const startPad = await page.evaluate(() => {
         const pads = document.querySelectorAll('.pad');
@@ -69,8 +60,8 @@ async function createTestRoute(page, numSegments = 3) {
         return null;
     }
 
-    // Click on start pad
-    await page.mouse.click(startPad.screenX, startPad.screenY);
+    // Double-click on start pad to begin routing
+    await page.mouse.click(startPad.screenX, startPad.screenY, { clickCount: 2 });
     await sleep(300);
 
     // Create segments by clicking at offset positions
@@ -85,6 +76,8 @@ async function createTestRoute(page, numSegments = 3) {
         const targetX = startPad.screenX + offset.dx;
         const targetY = startPad.screenY + offset.dy;
 
+        await page.mouse.move(targetX, targetY);
+        await sleep(200);
         await page.mouse.click(targetX, targetY);
         await sleep(300);
     }
@@ -107,10 +100,6 @@ async function createTestRoute(page, numSegments = 3) {
         }
         return null;
     });
-
-    // Disable trace mode for selection tests
-    await page.click('#trace-mode-toggle');
-    await sleep(200);
 
     return routeId;
 }

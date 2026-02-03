@@ -55,33 +55,22 @@ async function runTest() {
         }
         console.log('  ✓ Viewport info obtained');
 
-        // Step 3: Enable trace mode
-        console.log('\nStep 3: Enabling trace mode...');
-        await page.click('#trace-mode-toggle');
-        await sleep(300);
-
-        const traceModeActive = await page.evaluate(() =>
-            document.body.classList.contains('trace-mode-active')
-        );
-        if (!traceModeActive) throw new Error('Trace mode not activated');
-        console.log('  ✓ Trace mode enabled');
-
-        // Step 4: Click start point (known clear area)
-        console.log('\nStep 4: Clicking start point...');
+        // Step 3: Double-click start point to begin routing (known clear area)
+        console.log('\nStep 3: Double-clicking start point...');
         const startSvg = { x: 135, y: 55 };
         const start = svgToScreen(startSvg.x, startSvg.y);
         console.log(`  SVG coords: (${startSvg.x}, ${startSvg.y})`);
         console.log(`  Screen coords: (${start.x.toFixed(1)}, ${start.y.toFixed(1)})`);
 
-        await page.mouse.click(start.x, start.y);
+        await page.mouse.click(start.x, start.y, { clickCount: 2 });
         await sleep(500);
 
         const startMarker = await page.evaluate(() => !!document.querySelector('.start-marker'));
         if (!startMarker) throw new Error('Start marker not found');
         console.log('  ✓ Start marker appeared');
 
-        // Step 5: Click end point to trigger routing
-        console.log('\nStep 5: Clicking end point to route...');
+        // Step 4: Click end point to trigger routing
+        console.log('\nStep 4: Clicking end point to route...');
         const endSvg = { x: 145, y: 60 };
         const end = svgToScreen(endSvg.x, endSvg.y);
         console.log(`  SVG coords: (${endSvg.x}, ${endSvg.y})`);
@@ -112,8 +101,8 @@ async function runTest() {
         console.log('  ✓ Pending trace created');
         console.log(`  Path: ${result.pathData}`);
 
-        // Step 6: Verify 45-degree angles
-        console.log('\nStep 6: Verifying 45° angle constraint...');
+        // Step 5: Verify 45-degree angles
+        console.log('\nStep 5: Verifying 45° angle constraint...');
         const pathMatches = result.pathData.match(/[ML]\s*[\d.-]+,[\d.-]+/g);
         if (!pathMatches || pathMatches.length < 2) {
             throw new Error('Invalid path data');
@@ -144,8 +133,8 @@ async function runTest() {
         if (!allAnglesValid) throw new Error('Path has invalid angles');
         console.log('  ✓ All path segments use 45° angle increments');
 
-        // Step 7: Confirm the trace
-        console.log('\nStep 7: Confirming trace...');
+        // Step 6: Confirm the trace
+        console.log('\nStep 6: Confirming trace...');
         await page.click('#trace-confirm');
         await sleep(300);
 

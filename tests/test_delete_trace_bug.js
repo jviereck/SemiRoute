@@ -18,11 +18,7 @@ async function runTest() {
         console.log('Page loaded.');
 
         // 1. Create a new trace
-        await page.click('#trace-mode-toggle');
-        await page.waitForSelector('body.trace-mode-active');
-        console.log('Trace mode activated.');
-
-        // Click on a pad to ensure we have a net
+        // Find a pad with a net
         const startPadPos = await page.evaluate(() => {
             const pad = document.querySelector('.pad[data-net="1"]');
             if (!pad) return { x: 400, y: 300 };
@@ -30,16 +26,19 @@ async function runTest() {
             return { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 };
         });
 
-        // Click to start trace
-        await page.mouse.click(startPadPos.x, startPadPos.y);
+        // Double-click to start routing
+        await page.mouse.click(startPadPos.x, startPadPos.y, { clickCount: 2 });
         await sleep(500);
+        console.log('Routing started.');
 
-        // Click to end trace
+        // Move and click to commit a segment
         const endPos = { x: startPadPos.x + 50, y: startPadPos.y + 50 };
+        await page.mouse.move(endPos.x, endPos.y);
+        await sleep(300);
         await page.mouse.click(endPos.x, endPos.y);
         await sleep(500);
 
-        // Double click to finish
+        // Double-click to finish
         await page.mouse.click(endPos.x, endPos.y, { clickCount: 2 });
         await sleep(500);
         console.log('Trace created.');
@@ -50,10 +49,6 @@ async function runTest() {
         }
 
         // 2. Select the trace
-        // Toggle off trace mode
-        await page.keyboard.press('t');
-        await sleep(500);
-
         // Click on the trace to select it.
         const tracePos = { x: startPadPos.x + 25, y: startPadPos.y + 25 };
         await page.mouse.click(tracePos.x, tracePos.y);

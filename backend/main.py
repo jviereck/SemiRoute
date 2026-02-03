@@ -28,9 +28,6 @@ class RouteRequest(BaseModel):
     width: float
     net_id: Optional[int] = None
     skip_endpoint_check: bool = False  # Skip endpoint net validation
-    # Reference path for guided routing (companion mode)
-    reference_path: Optional[list[list[float]]] = None  # [[x,y], [x,y], ...]
-    reference_spacing: Optional[float] = None  # Desired spacing from reference
 
 
 class RouteResponse(BaseModel):
@@ -213,7 +210,6 @@ async def route_trace(request: RouteRequest):
         )
 
     # Check if endpoint is on a different-net pad (prevent routing to wrong net)
-    # Skip this check for companion routing where we route to arbitrary offset points
     if not request.skip_endpoint_check:
         end_net_id = trace_router.find_net_at_point(
             request.end_x, request.end_y, request.layer
@@ -228,8 +224,6 @@ async def route_trace(request: RouteRequest):
             )
 
     # Check if start or end points are blocked - return early to avoid slow routing
-    # Skip this check for companion routing (skip_endpoint_check=True) since target points
-    # may be near reference trace elements that appear blocked but are routeable-to
     trace_radius = request.width / 2
     obs_map = trace_router.get_obstacle_map(request.layer, net_id)
     start_blocked = obs_map.is_blocked(request.start_x, request.start_y, trace_radius, net_id)
@@ -245,11 +239,6 @@ async def route_trace(request: RouteRequest):
             msg = "End point is blocked (inside obstacle/clearance zone)"
         return RouteResponse(success=False, path=[], message=msg)
 
-    # Convert reference_path to tuples if provided
-    ref_path = None
-    if request.reference_path:
-        ref_path = [(p[0], p[1]) for p in request.reference_path]
-
     path = trace_router.route(
         start_x=request.start_x,
         start_y=request.start_y,
@@ -257,9 +246,7 @@ async def route_trace(request: RouteRequest):
         end_y=request.end_y,
         layer=request.layer,
         width=request.width,
-        net_id=net_id,
-        reference_path=ref_path,
-        reference_spacing=request.reference_spacing
+        net_id=net_id
     )
 
     if path:

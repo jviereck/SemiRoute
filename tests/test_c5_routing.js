@@ -84,24 +84,13 @@ async function runTest() {
             };
         }
 
-        // Step 3: Enable trace mode
-        console.log('\nStep 3: Enabling trace mode...');
-        await page.click('#trace-mode-toggle');
-        await sleep(300);
-
-        const traceModeActive = await page.evaluate(() =>
-            document.body.classList.contains('trace-mode-active')
-        );
-        if (!traceModeActive) throw new Error('Trace mode not activated');
-        console.log('  ✓ Trace mode enabled');
-
-        // Step 4: Click on C5 pad 1 to start routing
-        console.log('\nStep 4: Clicking on C5 pad 1 to start routing...');
+        // Step 3: Double-click on C5 pad 1 to start routing
+        console.log('\nStep 3: Double-clicking on C5 pad 1 to start routing...');
         const startPos = svgToScreen(C5_PAD1.x, C5_PAD1.y);
         console.log(`  SVG coords: (${C5_PAD1.x}, ${C5_PAD1.y})`);
         console.log(`  Screen coords: (${startPos.x.toFixed(1)}, ${startPos.y.toFixed(1)})`);
 
-        await page.mouse.click(startPos.x, startPos.y);
+        await page.mouse.click(startPos.x, startPos.y, { clickCount: 2 });
         await sleep(500);
 
         const startMarker = await page.evaluate(() => !!document.querySelector('.start-marker'));
@@ -118,9 +107,9 @@ async function runTest() {
         });
         console.log(`  Status: "${sessionInfo.status}"`);
 
-        // Step 5: Move mouse to create a route
+        // Step 4: Move mouse to create a route
         // Note: Route only 2mm to avoid crossing non-GND obstacles
-        console.log('\nStep 5: Moving mouse to route...');
+        console.log('\nStep 4: Moving mouse to route...');
         const endPos = svgToScreen(C5_PAD1.x + 2, C5_PAD1.y);  // 2mm to the right (stays in GND region)
         console.log(`  End SVG coords: (${C5_PAD1.x + 2}, ${C5_PAD1.y})`);
         console.log(`  End screen coords: (${endPos.x.toFixed(1)}, ${endPos.y.toFixed(1)})`);
@@ -161,16 +150,16 @@ async function runTest() {
         console.log('  ✓ Pending trace created');
         console.log(`  Path: ${routeResult.pathData}`);
 
-        // Step 6: Verify path has valid points
-        console.log('\nStep 6: Verifying path...');
+        // Step 5: Verify path has valid points
+        console.log('\nStep 5: Verifying path...');
         const pathMatches = routeResult.pathData.match(/[ML]\s*[\d.-]+,[\d.-]+/g);
         if (!pathMatches || pathMatches.length < 2) {
             throw new Error('Path has less than 2 points');
         }
         console.log(`  ✓ Path has ${pathMatches.length} points`);
 
-        // Step 7: Click to commit the segment
-        console.log('\nStep 7: Committing trace segment...');
+        // Step 6: Click to commit the segment
+        console.log('\nStep 6: Committing trace segment...');
         await page.mouse.click(endPos.x, endPos.y);
         await sleep(500);
 
@@ -184,8 +173,8 @@ async function runTest() {
         console.log(`  User trace exists: ${afterCommit.hasUserTrace}`);
         console.log(`  Start marker exists: ${afterCommit.startMarkerExists}`);
 
-        // Step 8: Double-click to finish
-        console.log('\nStep 8: Double-clicking to finish...');
+        // Step 7: Double-click to finish
+        console.log('\nStep 7: Double-clicking to finish...');
         const finalPos = svgToScreen(C5_PAD1.x + 2.5, C5_PAD1.y);  // Stay in GND region
         await page.mouse.move(finalPos.x, finalPos.y);
         await sleep(300);

@@ -76,11 +76,6 @@ async function runTest() {
         });
         console.log('\nC5 pad visibility:', JSON.stringify(padVisible, null, 2));
 
-        // Enable trace mode
-        console.log('\nEnabling trace mode...');
-        await page.click('#trace-mode-toggle');
-        await sleep(500);
-
         // Check what element is at C5 position
         const c5Screen = svgToScreen(C5_PAD1.x, C5_PAD1.y);
         console.log(`\nC5 screen position: (${c5Screen.x.toFixed(1)}, ${c5Screen.y.toFixed(1)})`);
@@ -96,9 +91,9 @@ async function runTest() {
         }, c5Screen.x, c5Screen.y);
         console.log('Elements at C5 position:', JSON.stringify(elementAtC5, null, 2));
 
-        // Click on C5
-        console.log('\nClicking on C5 pad...');
-        await page.mouse.click(c5Screen.x, c5Screen.y);
+        // Double-click on C5 to start routing
+        console.log('\nDouble-clicking on C5 pad to start routing...');
+        await page.mouse.click(c5Screen.x, c5Screen.y, { clickCount: 2 });
         await sleep(500);
 
         // Check routing session state

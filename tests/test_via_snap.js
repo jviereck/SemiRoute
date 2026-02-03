@@ -130,25 +130,8 @@ async function runTests() {
         }
         pass('Find pad', `Pad at PCB (${elements.pad.pcbX.toFixed(2)}, ${elements.pad.pcbY.toFixed(2)})`);
 
-        // ========== TEST 3: Switch to trace mode ==========
-        log('\n--- Test 3: Enter Trace Mode ---');
-
-        // Click on "Trace" mode toggle
-        await page.click('#trace-mode-toggle');
-        await sleep(300);
-
-        const isTraceMode = await page.evaluate(() => {
-            return document.body.classList.contains('trace-mode-active');
-        });
-
-        if (isTraceMode) {
-            pass('Enter trace mode');
-        } else {
-            fail('Enter trace mode');
-        }
-
-        // ========== TEST 4: Start routing session ==========
-        log('\n--- Test 4: Start Routing Session ---');
+        // ========== TEST 3: Start routing session ==========
+        log('\n--- Test 3: Start Routing Session ---');
 
         // Double-click on the pad to start routing (single click just highlights)
         await page.mouse.click(elements.pad.screenX, elements.pad.screenY, { clickCount: 2 });
@@ -166,8 +149,8 @@ async function runTests() {
             throw new Error('Cannot continue without routing session');
         }
 
-        // ========== TEST 5: Move mouse over via and check snapping ==========
-        log('\n--- Test 5: Via Center Snapping ---');
+        // ========== TEST 4: Move mouse over via and check snapping ==========
+        log('\n--- Test 4: Via Center Snapping ---');
 
         // Move mouse to the via
         await page.mouse.move(elements.via.screenX, elements.via.screenY);

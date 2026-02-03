@@ -1,6 +1,6 @@
 /**
- * Puppeteer test for trace mode functionality.
- * Tests trace mode toggle, routing, and same-net crossing.
+ * Puppeteer test for routing functionality.
+ * Tests routing UI, double-click to start routing, and same-net crossing.
  */
 const puppeteer = require('puppeteer');
 const { SERVER_URL } = require('./config_test');
@@ -34,7 +34,7 @@ async function sleep(ms) {
 }
 
 async function runTests() {
-    log('Starting trace mode tests...');
+    log('Starting routing tests...');
     log(`Server URL: ${SERVER_URL}`);
 
     const browser = await puppeteer.launch({
@@ -64,13 +64,11 @@ async function runTests() {
             throw new Error('Cannot continue without server');
         }
 
-        // ========== TEST 2: Trace mode UI exists ==========
-        log('\n--- Test 2: Trace Mode UI ---');
-        const traceModeUI = await page.evaluate(() => {
+        // ========== TEST 2: Routing UI exists ==========
+        log('\n--- Test 2: Routing UI ---');
+        const routingUI = await page.evaluate(() => {
             return {
-                hasPanel: !!document.getElementById('trace-mode-panel'),
-                hasToggle: !!document.getElementById('trace-mode-toggle'),
-                hasOptions: !!document.getElementById('trace-options'),
+                hasPanel: !!document.getElementById('routing-panel'),
                 hasLayerSelect: !!document.getElementById('trace-layer'),
                 hasWidthInput: !!document.getElementById('trace-width'),
                 hasStatus: !!document.getElementById('trace-status'),
@@ -79,99 +77,32 @@ async function runTests() {
             };
         });
 
-        if (traceModeUI.hasPanel) {
-            pass('Trace mode panel exists');
+        if (routingUI.hasPanel) {
+            pass('Routing panel exists');
         } else {
-            fail('Trace mode panel exists');
+            fail('Routing panel exists');
         }
 
-        if (traceModeUI.hasToggle) {
-            pass('Trace mode toggle button exists');
+        if (routingUI.hasLayerSelect && routingUI.hasWidthInput) {
+            pass('Routing controls exist (layer, width)');
         } else {
-            fail('Trace mode toggle button exists');
+            fail('Routing controls exist', `layer=${routingUI.hasLayerSelect}, width=${routingUI.hasWidthInput}`);
         }
 
-        if (traceModeUI.hasLayerSelect && traceModeUI.hasWidthInput) {
-            pass('Trace options controls exist');
+        if (routingUI.hasStatus) {
+            pass('Status display exists');
         } else {
-            fail('Trace options controls exist');
+            fail('Status display exists');
         }
 
-        // ========== TEST 3: Toggle trace mode ==========
-        log('\n--- Test 3: Toggle Trace Mode ---');
-
-        // Check initial state
-        const initialState = await page.evaluate(() => {
-            const toggle = document.getElementById('trace-mode-toggle');
-            const options = document.getElementById('trace-options');
-            return {
-                toggleText: toggle ? toggle.textContent : '',
-                toggleActive: toggle ? toggle.classList.contains('active') : false,
-                optionsHidden: options ? options.classList.contains('hidden') : true,
-                bodyHasTraceMode: document.body.classList.contains('trace-mode-active')
-            };
-        });
-
-        if (!initialState.toggleActive) {
-            pass('Trace mode initially disabled');
+        if (routingUI.hasConfirm && routingUI.hasCancel) {
+            pass('Confirm/Cancel buttons exist');
         } else {
-            fail('Trace mode initially disabled');
+            fail('Confirm/Cancel buttons exist');
         }
 
-        // Click toggle to enable trace mode
-        await page.click('#trace-mode-toggle');
-        await sleep(300);
-
-        const afterEnable = await page.evaluate(() => {
-            const toggle = document.getElementById('trace-mode-toggle');
-            const options = document.getElementById('trace-options');
-            return {
-                toggleText: toggle ? toggle.textContent : '',
-                toggleActive: toggle ? toggle.classList.contains('active') : false,
-                optionsHidden: options ? options.classList.contains('hidden') : true,
-                bodyHasTraceMode: document.body.classList.contains('trace-mode-active')
-            };
-        });
-
-        if (afterEnable.toggleActive && afterEnable.bodyHasTraceMode) {
-            pass('Trace mode enabled after click');
-        } else {
-            fail('Trace mode enabled after click', `active=${afterEnable.toggleActive}, body=${afterEnable.bodyHasTraceMode}`);
-        }
-
-        if (!afterEnable.optionsHidden) {
-            pass('Trace options visible when enabled');
-        } else {
-            fail('Trace options visible when enabled');
-        }
-
-        await page.screenshot({ path: `${SCREENSHOT_DIR}/trace_mode_enabled.png`, fullPage: true });
-        log(`  Screenshot: ${SCREENSHOT_DIR}/trace_mode_enabled.png`);
-
-        // ========== TEST 4: Keyboard shortcut (T) ==========
-        log('\n--- Test 4: Keyboard Shortcut ---');
-
-        // Disable trace mode first
-        await page.click('#trace-mode-toggle');
-        await sleep(200);
-
-        // Press T to enable
-        await page.keyboard.press('t');
-        await sleep(200);
-
-        const afterT = await page.evaluate(() => {
-            const toggle = document.getElementById('trace-mode-toggle');
-            return toggle ? toggle.classList.contains('active') : false;
-        });
-
-        if (afterT) {
-            pass('T key enables trace mode');
-        } else {
-            fail('T key enables trace mode');
-        }
-
-        // ========== TEST 5: Layer selection ==========
-        log('\n--- Test 5: Layer Selection ---');
+        // ========== TEST 3: Layer selection ==========
+        log('\n--- Test 3: Layer Selection ---');
 
         const layers = await page.evaluate(() => {
             const select = document.getElementById('trace-layer');
@@ -187,21 +118,15 @@ async function runTests() {
             fail('Layer selector has copper layers');
         }
 
-        // ========== TEST 6: Find pads for routing test ==========
-        log('\n--- Test 6: Find Test Pads ---');
+        // ========== TEST 4: Find pads for routing test ==========
+        log('\n--- Test 4: Find Test Pads ---');
 
         const testPads = await page.evaluate(() => {
             const pads = Array.from(document.querySelectorAll('.pad'));
 
-            // Find two pads on F.Cu with the same net (for same-net crossing test)
-            const fCuPads = pads.filter(p => {
-                // Check if pad is on F.Cu (has data attribute or is in F.Cu layer)
-                return true; // All pads should work for this test
-            });
-
             // Group pads by net
             const padsByNet = {};
-            for (const pad of fCuPads) {
+            for (const pad of pads) {
                 const netId = pad.dataset.net;
                 if (netId && parseInt(netId, 10) > 0) {
                     if (!padsByNet[netId]) padsByNet[netId] = [];
@@ -255,20 +180,10 @@ async function runTests() {
             pass('Found same-net pad pair for testing');
         } else {
             fail('Found same-net pad pair for testing', 'No net with multiple pads found');
-            // Continue with other tests anyway
         }
 
-        // ========== TEST 7: Single-click highlights net (no routing) ==========
-        log('\n--- Test 7: Single-Click Highlights ---');
-
-        // Ensure trace mode is enabled
-        let traceModeActive = await page.evaluate(() => {
-            return document.body.classList.contains('trace-mode-active');
-        });
-        if (!traceModeActive) {
-            await page.click('#trace-mode-toggle');
-            await sleep(200);
-        }
+        // ========== TEST 5: Single-click highlights net (no routing) ==========
+        log('\n--- Test 5: Single-Click Highlights ---');
 
         // Get a pad to single-click
         const highlightTarget = await page.evaluate(() => {
@@ -328,17 +243,8 @@ async function runTests() {
             await sleep(200);
         }
 
-        // ========== TEST 8: Start marker appears on double-click ==========
-        log('\n--- Test 8: Start Marker ---');
-
-        // Ensure trace mode is enabled
-        const traceModeEnabled = await page.evaluate(() => {
-            return document.body.classList.contains('trace-mode-active');
-        });
-        if (!traceModeEnabled) {
-            await page.click('#trace-mode-toggle');
-            await sleep(200);
-        }
+        // ========== TEST 6: Start marker appears on double-click ==========
+        log('\n--- Test 6: Start Marker ---');
 
         // Get a clickable pad position
         const clickTarget = await page.evaluate(() => {
@@ -365,7 +271,7 @@ async function runTests() {
 
         if (clickTarget) {
             log(`  Double-clicking on pad at (${clickTarget.screenX.toFixed(1)}, ${clickTarget.screenY.toFixed(1)})`);
-            // Double-click to start routing (single click just highlights in trace mode)
+            // Double-click to start routing
             await page.mouse.click(clickTarget.screenX, clickTarget.screenY, { clickCount: 2 });
             await sleep(500);
 
@@ -392,12 +298,12 @@ async function runTests() {
                 fail('Status updates after double-click', `Got: "${statusText}"`);
             }
 
-            await page.screenshot({ path: `${SCREENSHOT_DIR}/trace_mode_start_marker.png`, fullPage: true });
-            log(`  Screenshot: ${SCREENSHOT_DIR}/trace_mode_start_marker.png`);
+            await page.screenshot({ path: `${SCREENSHOT_DIR}/routing_start_marker.png`, fullPage: true });
+            log(`  Screenshot: ${SCREENSHOT_DIR}/routing_start_marker.png`);
         }
 
-        // ========== TEST 8: API Route endpoint ==========
-        log('\n--- Test 9: Route API Endpoint ---');
+        // ========== TEST 7: API Route endpoint ==========
+        log('\n--- Test 7: Route API Endpoint ---');
 
         const routeResponse = await page.evaluate(async () => {
             try {
@@ -429,8 +335,8 @@ async function runTests() {
             fail('Route API endpoint responds', `Status: ${routeResponse.status}`);
         }
 
-        // ========== TEST 9: Path uses 45-degree angles ==========
-        log('\n--- Test 10: 45-Degree Angle Constraint ---');
+        // ========== TEST 8: Path uses 45-degree angles ==========
+        log('\n--- Test 8: 45-Degree Angle Constraint ---');
 
         if (routeResponse.data && routeResponse.data.path && routeResponse.data.path.length >= 2) {
             const path = routeResponse.data.path;
@@ -455,16 +361,16 @@ async function runTests() {
             }
 
             if (allAnglesValid) {
-                pass('Path segments use 45° angles only');
+                pass('Path segments use 45 degree angles only');
             } else {
-                fail('Path segments use 45° angles only', `Found angle ${invalidAngle?.toFixed(1)}°`);
+                fail('Path segments use 45 degree angles only', `Found angle ${invalidAngle?.toFixed(1)} degrees`);
             }
         } else {
             log('  Skipping angle test - no path returned');
         }
 
-        // ========== TEST 10: Same-net crossing allowed ==========
-        log('\n--- Test 11: Same-Net Crossing ---');
+        // ========== TEST 9: Same-net crossing allowed ==========
+        log('\n--- Test 9: Same-Net Crossing ---');
 
         if (testPads) {
             const sameNetRoute = await page.evaluate(async (pads) => {
@@ -504,8 +410,8 @@ async function runTests() {
             log('  Skipping same-net test - no test pads found');
         }
 
-        // ========== TEST 11: Cancel resets state ==========
-        log('\n--- Test 12: Cancel/Reset ---');
+        // ========== TEST 10: Cancel resets state ==========
+        log('\n--- Test 10: Cancel/Reset ---');
 
         // Press Escape to cancel
         await page.keyboard.press('Escape');
@@ -544,9 +450,9 @@ async function runTests() {
         log('\nScreenshots saved to /tmp/');
 
         if (results.failed > 0) {
-            log('\n⚠️  Some tests failed');
+            log('\n  Some tests failed');
         } else {
-            log('\n✓ All tests passed');
+            log('\n  All tests passed');
         }
 
         log('\nTests completed successfully.');
@@ -554,9 +460,9 @@ async function runTests() {
         process.exit(results.failed > 0 ? 1 : 0);
 
     } catch (err) {
-        console.error('\n❌ Test error:', err.message);
-        await page.screenshot({ path: `${SCREENSHOT_DIR}/trace_mode_error.png`, fullPage: true });
-        log(`Error screenshot: ${SCREENSHOT_DIR}/trace_mode_error.png`);
+        console.error('\n  Test error:', err.message);
+        await page.screenshot({ path: `${SCREENSHOT_DIR}/routing_error.png`, fullPage: true });
+        log(`Error screenshot: ${SCREENSHOT_DIR}/routing_error.png`);
         await browser.close();
         process.exit(1);
     }

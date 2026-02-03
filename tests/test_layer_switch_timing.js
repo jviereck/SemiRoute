@@ -29,11 +29,6 @@ async function runTest() {
         await page.goto(SERVER_URL, { waitUntil: 'networkidle0', timeout: 10000 });
         console.log('Page loaded');
 
-        // Enable trace mode
-        await page.click('#trace-mode-toggle');
-        await sleep(300);
-        console.log('Trace mode enabled');
-
         // Find a pad to click
         const startPad = await page.evaluate(() => {
             const pads = document.querySelectorAll('.pad');
@@ -56,8 +51,9 @@ async function runTest() {
             return;
         }
 
-        console.log(`Clicking pad ${startPad.padId} at (${startPad.screenX}, ${startPad.screenY})`);
-        await page.mouse.click(startPad.screenX, startPad.screenY);
+        // Double-click on pad to start routing
+        console.log(`Double-clicking pad ${startPad.padId} at (${startPad.screenX}, ${startPad.screenY})`);
+        await page.mouse.click(startPad.screenX, startPad.screenY, { clickCount: 2 });
         await sleep(500);
 
         // Move mouse to trigger routing
@@ -73,7 +69,6 @@ async function runTest() {
             return {
                 layer: document.getElementById('trace-layer').value,
                 hasState: !!state,
-                appMode: state?.appMode,
                 hasSession: !!state?.routingSession,
                 isRouting: state?.isRouting,
                 hasPendingPath: !!(state?.routingSession?.pendingPath),

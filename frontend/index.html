@@ -11,34 +11,24 @@
         <aside class="sidebar">
             <h1>SemiRouter</h1>
 
-            <section class="panel" id="trace-mode-panel">
-                <h2>Trace Mode</h2>
-                <button id="trace-mode-toggle">Enable Trace Mode</button>
-                <div id="trace-options" class="hidden">
-                    <label>Layer:
-                        <select id="trace-layer">
-                            <option value="F.Cu">F.Cu (Front)</option>
-                            <option value="B.Cu">B.Cu (Back)</option>
-                            <option value="In1.Cu">In1.Cu</option>
-                            <option value="In2.Cu">In2.Cu</option>
-                        </select>
-                    </label>
-                    <label>Width:
-                        <input type="number" id="trace-width" value="0.25" step="0.05" min="0.1"> mm
-                    </label>
-                    <label>Companion Spacing:
-                        <input type="number" id="companion-spacing" value="0.5" step="0.05" min="0.35"> mm
-                    </label>
-                    <div id="trace-status">Click a pad to start</div>
-                    <div id="companion-status" class="hidden">
-                        <div>Reference: <span id="reference-net"></span></div>
-                        <div>Companions: <span id="companion-net-list"></span></div>
-                    </div>
-                    <div id="trace-error" class="hidden"></div>
-                    <div id="trace-actions" class="hidden">
-                        <button id="trace-confirm">Confirm</button>
-                        <button id="trace-cancel">Cancel</button>
-                    </div>
+            <section class="panel" id="routing-panel">
+                <h2>Routing</h2>
+                <label>Layer:
+                    <select id="trace-layer">
+                        <option value="F.Cu">F.Cu (Front)</option>
+                        <option value="B.Cu">B.Cu (Back)</option>
+                        <option value="In1.Cu">In1.Cu</option>
+                        <option value="In2.Cu">In2.Cu</option>
+                    </select>
+                </label>
+                <label>Width:
+                    <input type="number" id="trace-width" value="0.25" step="0.05" min="0.1"> mm
+                </label>
+                <div id="trace-status">Double-click pad to start routing</div>
+                <div id="trace-error" class="hidden"></div>
+                <div id="trace-actions" class="hidden">
+                    <button id="trace-confirm">Confirm</button>
+                    <button id="trace-cancel">Cancel</button>
                 </div>
             </section>
 
@@ -157,20 +147,13 @@
                 <ul class="controls-list">
                     <li><kbd>Scroll</kbd> Zoom</li>
                     <li><kbd>Shift+Drag</kbd> Pan</li>
-                    <li><kbd>Click</kbd> Select / Commit trace</li>
+                    <li><kbd>Click</kbd> Select net / Commit trace</li>
                     <li><kbd>Shift+Click</kbd> Multi-select segments</li>
-                    <li><kbd>Dbl-click</kbd> Select route / Finish</li>
+                    <li><kbd>Dbl-click</kbd> Start / Finish routing</li>
                     <li><kbd>Backspace</kbd> Delete selected</li>
                     <li><kbd>Esc</kbd> Cancel / Clear selection</li>
                     <li><kbd>R</kbd> Reset view</li>
-                    <li><kbd>T</kbd> Toggle trace mode</li>
                     <li><kbd>1-4</kbd> Via + switch layer</li>
-                </ul>
-                <div class="controls-divider"></div>
-                <div class="controls-subtitle">Companion Mode</div>
-                <ul class="controls-list">
-                    <li><kbd>Click trace</kbd> Select as reference</li>
-                    <li><kbd>Alt+Click</kbd> Add companion net</li>
                 </ul>
             </section>
 
